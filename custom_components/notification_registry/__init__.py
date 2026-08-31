@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import services
+from . import services, websocket_api
 from .const import DOMAIN
 
 PLATFORMS = ["sensor"]
@@ -12,6 +12,7 @@ PLATFORMS = ["sensor"]
 
 async def async_setup(hass: Any, _config: dict[str, Any]) -> bool:
     hass.data.setdefault(DOMAIN, {})
+    websocket_api.async_register_commands(hass)
     return True
 
 
@@ -23,6 +24,7 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
         services._async_load_registry(hass, entry)
     )
     domain_data[entry.entry_id] = registry
+    websocket_api.async_register_commands(hass)
     services.async_register_services(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
