@@ -15,6 +15,11 @@ im Repository gemeinsam versioniert und über HACS ausgeliefert.
 4. Bei einem Lovelace-Dashboard im Storage-Modus wird die Kartenressource beim
    Setup automatisch als Modul registriert.
 
+Kann die Lovelace-Resource-Collection beim Start nicht gespeichert werden,
+bleibt die Registry-Integration trotzdem verfügbar; Home Assistant protokolliert
+eine Warnung. Die Resource kann anschließend im Dashboard einmalig manuell mit
+dem oben genannten Pfad ergänzt werden.
+
 Die JavaScript-Karte liegt im HACS-Paket unter
 `custom_components/notification_registry/frontend/notification-registry-card.js`.
 Sie wird über den HA-Pfad

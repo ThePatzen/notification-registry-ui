@@ -38,9 +38,17 @@ def test_manual_install_deliverables_are_complete():
     assert (INTEGRATION / "manifest.json").is_file()
     assert (INTEGRATION / "config_flow.py").is_file()
     assert (INTEGRATION / "frontend" / "notification-registry-card.js").is_file()
+    assert (ROOT / "brand" / "icon.png").is_file()
+    assert (ROOT / "brand" / "icon.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert 'customElements.define("notification-registry-card"' in (
         INTEGRATION / "frontend" / "notification-registry-card.js"
     ).read_text(encoding="utf-8")
+
+
+def test_legacy_and_hacs_card_copies_stay_in_sync():
+    bundled = (INTEGRATION / "frontend" / "notification-registry-card.js").read_bytes()
+    legacy = (ROOT / "www" / "notification-registry-card.js").read_bytes()
+    assert bundled == legacy
 
 
 def test_initial_registry_entries_are_nonempty_and_fully_valid():
@@ -78,6 +86,7 @@ def test_readme_documents_manual_paths_and_safe_rollback():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "HACS" in readme
     assert "ThePatzen/notification-registry-ui" in readme
+    assert "protokolliert" in readme
     for required in (
         "custom_components/notification_registry",
         "custom_components/notification_registry/frontend/notification-registry-card.js",

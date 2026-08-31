@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from .const import CARD_RESOURCE_URL, FRONTEND_DIR, URL_BASE
 
 try:
     from homeassistant.components.http import StaticPathConfig
+    from homeassistant.exceptions import HomeAssistantError
 except ImportError:  # pragma: no cover - used by focused API doubles
     from dataclasses import dataclass
+
+    class HomeAssistantError(Exception):  # type: ignore[no-redef]
+        """Small compatibility error for tests without Home Assistant installed."""
 
     @dataclass(frozen=True)
     class StaticPathConfig:  # type: ignore[no-redef]
@@ -21,6 +26,7 @@ except ImportError:  # pragma: no cover - used by focused API doubles
 
 
 _SETUP_MARKER = "_frontend_registered"
+_LOGGER = logging.getLogger(__name__)
 
 
 def _resource_mode(lovelace: Any) -> str:
@@ -74,6 +80,11 @@ async def async_register_frontend(hass: Any) -> None:
 
     lovelace = hass.data.get("lovelace")
     if lovelace is not None and _resource_mode(lovelace) == "storage":
-        await _async_register_resource(lovelace)
+        try:
+            await _async_register_resource(lovelace)
+        except (HomeAssistantError, OSError, RuntimeError):
+            _LOGGER.warning(
+                "Could not register the Lovelace card resource", exc_info=True
+            )
 
     markers[_SETUP_MARKER] = True

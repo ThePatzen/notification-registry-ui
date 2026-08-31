@@ -24,6 +24,8 @@ class FakeResources:
         self.loaded = loaded
         self.items = list(items or [])
         self.created = []
+        self.updated = []
+        self.fail_create = False
 
     async def async_load(self):
         self.loaded = True
@@ -32,8 +34,13 @@ class FakeResources:
         return list(self.items)
 
     async def async_create_item(self, item):
+        if self.fail_create:
+            raise RuntimeError("resource storage unavailable")
         self.created.append(item)
         self.items.append({"id": str(len(self.items) + 1), **item})
+
+    async def async_update_item(self, item_id, updates):
+        self.updated.append((item_id, updates))
 
 
 @pytest.fixture
@@ -68,6 +75,42 @@ async def test_registers_lovelace_resource_once_after_loading(hass):
             "url": "/notification_registry/notification-registry-card.js?v=0.1.0",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_updates_existing_resource_with_stale_version(hass):
+    resources = hass.data["lovelace"].resources
+    resources.loaded = True
+    resources.items = [
+        {
+            "id": "legacy-card",
+            "res_type": "module",
+            "url": "/notification_registry/notification-registry-card.js?v=0.0.9",
+        }
+    ]
+
+    await async_register_frontend(hass)
+
+    assert resources.created == []
+    assert resources.updated == [
+        (
+            "legacy-card",
+            {
+                "res_type": "module",
+                "url": "/notification_registry/notification-registry-card.js?v=0.1.0",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_lovelace_resource_write_failure_does_not_block_setup(hass):
+    resources = hass.data["lovelace"].resources
+    resources.fail_create = True
+
+    await async_register_frontend(hass)
+
+    assert hass.data["notification_registry_frontend"]["_frontend_registered"] is True
 
 
 @pytest.mark.asyncio
