@@ -46,9 +46,8 @@ def _check_text(value: Any, field: str, issues: list[ValidationIssue]) -> str:
         issues.append(ValidationIssue(field, "required", f"{field} darf nicht leer sein."))
         return ""
     text = value.strip()
-    if re.sub(r"\{[A-Za-z_][A-Za-z0-9_]*\}", "", text).find("{") >= 0 or re.sub(
-        r"\{[A-Za-z_][A-Za-z0-9_]*\}", "", text
-    ).find("}") >= 0:
+    remaining = _PLACEHOLDER_RE.sub("", text)
+    if remaining.find("{") >= 0 or remaining.find("}") >= 0:
         if not any(issue.field == field and issue.code == "invalid_placeholder" for issue in issues):
             issues.append(ValidationIssue(field, "invalid_placeholder", "Ungültiger Platzhalter."))
     return text
@@ -79,6 +78,7 @@ class NotificationEntry:
             created = now
         if data.get("updated_at") is None:
             updated = created
+        tag = data.get("tag")
         return cls(
             key=data["key"].strip(),
             titel=data["titel"].strip(),
@@ -86,7 +86,7 @@ class NotificationEntry:
             schweregrad=data["schweregrad"],
             zielgruppe=data["zielgruppe"],
             kanaele=tuple(dict.fromkeys(data["kanaele"])),
-            tag=data.get("tag", "").strip() or None,
+            tag=tag.strip() if isinstance(tag, str) and tag.strip() else None,
             revision=data.get("revision", 1),
             created_at=created,
             updated_at=updated,

@@ -57,3 +57,8 @@ def test_round_trips_optional_metadata(valid_entry):
     assert data["revision"] == 3
     assert data["kanaele"] == ["persistent"]
     assert data["created_at"] == "2026-01-01T00:00:00+00:00"
+
+
+def test_round_trips_tagless_entry(valid_entry):
+    entry = NotificationEntry.from_dict(valid_entry(tag=None))
+    assert NotificationEntry.from_dict(entry.to_dict()) == entry
