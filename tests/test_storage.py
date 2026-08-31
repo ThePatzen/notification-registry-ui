@@ -23,11 +23,15 @@ class MemoryStore:
     def __init__(self, data=None):
         self.data = data
         self.saved = []
+        self.fail_next_save = False
 
     async def async_load(self):
         return self.data
 
     async def async_save(self, data):
+        if self.fail_next_save:
+            self.fail_next_save = False
+            raise OSError("disk full")
         self.saved.append(data)
         self.data = data
 
@@ -149,6 +153,30 @@ async def test_missing_store_imports_exact_live_registry():
 
 
 @pytest.mark.asyncio
+async def test_import_matches_every_field_in_deterministic_source():
+    store = MemoryStore()
+    source = json.loads(
+        Path("custom_components/notification_registry/initial_registry.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    snapshot = await RegistryStorage(store).async_load_or_import()
+
+    actual = {entry.key: entry for entry in snapshot.entries}
+    for raw_entry in source:
+        imported = actual[raw_entry["key"]]
+        canonical = NotificationEntry.from_dict(raw_entry)
+        assert imported.key == canonical.key
+        assert imported.titel == canonical.titel
+        assert imported.text == canonical.text
+        assert imported.schweregrad == canonical.schweregrad
+        assert imported.zielgruppe == canonical.zielgruppe
+        assert imported.kanaele == canonical.kanaele
+        assert imported.tag == canonical.tag
+
+
+@pytest.mark.asyncio
 async def test_import_is_idempotent_after_completion_marker_is_saved():
     store = MemoryStore()
     storage = RegistryStorage(store)
@@ -158,6 +186,20 @@ async def test_import_is_idempotent_after_completion_marker_is_saved():
 
     assert second == first
     assert len(store.saved) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_import_save_does_not_mark_adapter_or_store_completed():
+    store = MemoryStore()
+    store.fail_next_save = True
+    storage = RegistryStorage(store)
+
+    with pytest.raises(OSError):
+        await storage.async_load_or_import()
+
+    assert storage._import_completed is False
+    assert store.data is None
+    assert store.saved == []
 
 
 @pytest.mark.asyncio

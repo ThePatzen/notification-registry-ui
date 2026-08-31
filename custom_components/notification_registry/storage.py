@@ -95,9 +95,13 @@ class RegistryStorage:
             schema_minor_version=SCHEMA_MINOR_VERSION,
             import_completed=True,
         )
-        self._import_completed = True
-        await self.async_save(snapshot)
-        return await self.async_load()
+        previous_import_completed = self._import_completed
+        try:
+            await self.async_save(snapshot)
+            return await self.async_load()
+        except Exception:
+            self._import_completed = previous_import_completed
+            raise
 
     def _snapshot_from_raw(self, raw: Any) -> RegistrySnapshot:
         if not isinstance(raw, dict):
