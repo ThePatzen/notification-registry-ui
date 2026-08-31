@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from .model import NotificationEntry
@@ -78,7 +78,7 @@ class NotificationRegistry:
         async with self._lock:
             if self.get(candidate.key) is not None:
                 raise DuplicateKeyError(f"Key already exists: {candidate.key}.")
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             candidate = NotificationEntry.from_dict(
                 {
                     **candidate.to_dict(),
@@ -104,7 +104,7 @@ class NotificationRegistry:
             candidate_data["key"] = key
             candidate_data["revision"] = current.revision + 1
             candidate_data["created_at"] = current.created_at.isoformat()
-            candidate_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+            candidate_data["updated_at"] = datetime.now(UTC).isoformat()
             candidate = NotificationEntry.from_dict(candidate_data)
             entries = tuple(
                 candidate if item.key == key else item
@@ -119,7 +119,7 @@ class NotificationRegistry:
             normalized_key = new_key.strip() if isinstance(new_key, str) else new_key
             if self.get(normalized_key) is not None:
                 raise DuplicateKeyError(f"Key already exists: {normalized_key}.")
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             candidate = NotificationEntry.from_dict(
                 {
                     **source.to_dict(),
@@ -146,7 +146,7 @@ class NotificationRegistry:
                 "key": normalized_key,
                 "revision": current.revision + 1,
             }
-            candidate_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+            candidate_data["updated_at"] = datetime.now(UTC).isoformat()
             candidate = NotificationEntry.from_dict(candidate_data)
             entries = tuple(
                 candidate if item.key == old_key else item

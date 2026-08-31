@@ -7,12 +7,12 @@ from custom_components.notification_registry.model import (
     NotificationEntry,
 )
 from custom_components.notification_registry.storage import (
-    RegistrySchemaError,
-    RegistrySnapshot,
-    RegistryStorage,
     SCHEMA_MINOR_VERSION,
     SCHEMA_VERSION,
     STORE_KEY,
+    RegistrySchemaError,
+    RegistrySnapshot,
+    RegistryStorage,
 )
 
 
@@ -84,4 +84,13 @@ async def test_invalid_stored_entry_is_rejected_without_normalization():
         }
     )
     with pytest.raises(EntryValidationError):
+        await RegistryStorage(store).async_load()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["schema_version", "data_revision"])
+async def test_boolean_version_values_are_rejected(field):
+    store = MemoryStore({"schema_version": 1, "entries": []})
+    store.data[field] = True
+    with pytest.raises(RegistrySchemaError):
         await RegistryStorage(store).async_load()

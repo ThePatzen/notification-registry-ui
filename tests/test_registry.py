@@ -100,3 +100,34 @@ async def test_registry_can_reload_persisted_snapshot(valid_entry):
     second = await NotificationRegistry.async_create(RegistryStorage(store))
     assert second.get("test::one").titel == "Wasseralarm"
     assert second.snapshot().data_revision == 1
+
+
+@pytest.mark.asyncio
+async def test_every_mutation_increments_data_revision_only_for_target(
+    registry, valid_entry
+):
+    instance, _ = registry
+    first = await instance.create(valid_entry(key="test::one"))
+    unrelated = await instance.create(valid_entry(key="test::other"))
+    assert instance.snapshot().data_revision == 2
+
+    first = await instance.update(
+        first.key, {**first.to_dict(), "titel": "Geändert"}, first.revision
+    )
+    assert instance.snapshot().data_revision == 3
+    assert instance.get(unrelated.key).revision == unrelated.revision
+
+    copied = await instance.duplicate(first.key, "test::copy")
+    assert instance.snapshot().data_revision == 4
+    assert instance.get(first.key).revision == first.revision
+    assert instance.get(unrelated.key).revision == unrelated.revision
+
+    renamed = await instance.rename(copied.key, "test::renamed", copied.revision)
+    assert instance.snapshot().data_revision == 5
+    assert instance.get(first.key).revision == first.revision
+    assert instance.get(unrelated.key).revision == unrelated.revision
+
+    await instance.delete(renamed.key, renamed.revision)
+    assert instance.snapshot().data_revision == 6
+    assert instance.get(first.key).revision == first.revision
+    assert instance.get(unrelated.key).revision == unrelated.revision

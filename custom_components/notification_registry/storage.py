@@ -49,7 +49,7 @@ class RegistryStorage:
             raise RegistrySchemaError("Registry store must contain an object.")
 
         major = raw.get("schema_version", SCHEMA_VERSION)
-        if not isinstance(major, int):
+        if type(major) is not int:
             raise RegistrySchemaError("Invalid registry schema version.")
         if major > SCHEMA_VERSION:
             raise RegistrySchemaError(f"Unsupported registry schema version: {major}.")
@@ -57,10 +57,10 @@ class RegistryStorage:
             raise RegistrySchemaError(f"Unsupported registry schema version: {major}.")
 
         minor = raw.get("schema_minor_version", SCHEMA_MINOR_VERSION)
-        if not isinstance(minor, int) or minor < 0:
+        if type(minor) is not int or minor < 0:
             raise RegistrySchemaError("Invalid registry schema minor version.")
         data_revision = raw.get("data_revision", 0)
-        if not isinstance(data_revision, int) or data_revision < 0:
+        if type(data_revision) is not int or data_revision < 0:
             raise RegistrySchemaError("Invalid registry data revision.")
         raw_entries = raw.get("entries", [])
         if not isinstance(raw_entries, list):
