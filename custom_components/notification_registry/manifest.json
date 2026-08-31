@@ -1,0 +1,10 @@
+{
+  "domain": "notification_registry",
+  "name": "Notification Registry",
+  "version": "0.1.0",
+  "config_flow": true,
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "requirements": [],
+  "documentation": "https://www.home-assistant.io/integrations/notification_registry"
+}
