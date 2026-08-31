@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Notification Registry",
+        "description": "Set up the registry once."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "The notification registry is already configured."
+    }
+  }
+}

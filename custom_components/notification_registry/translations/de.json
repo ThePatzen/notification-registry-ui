@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Benachrichtigungs-Registry",
+        "description": "Die Registry wird einmalig eingerichtet."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Die Benachrichtigungs-Registry ist bereits eingerichtet."
+    }
+  }
+}
