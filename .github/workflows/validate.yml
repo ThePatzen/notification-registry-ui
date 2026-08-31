@@ -35,7 +35,7 @@ jobs:
           cache: npm
       - name: Frontend tests
         run: |
-          npm install --ignore-scripts --no-package-lock
+          npm ci
           npm test -- --run
       - name: live-preflight documentation
         run: echo "Live preflight is required before installing into a running Home Assistant instance; CI does not mutate HA."

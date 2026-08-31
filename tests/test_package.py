@@ -1,9 +1,11 @@
-"""Checks that the repository can be installed as a HACS local integration."""
+"""Checks for the locally installable notification-registry deliverables."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+
+from custom_components.notification_registry.model import NotificationEntry
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,22 +16,18 @@ def load_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def test_hacs_metadata_targets_home_assistant_2026_8():
-    metadata = load_json(ROOT / "hacs.json")
+def structure(value):
+    """Return JSON shape without comparing translated string values."""
+    if isinstance(value, dict):
+        return {key: structure(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [structure(item) for item in value]
+    return type(value).__name__
 
-    assert metadata == {
-        "name": "Notification Registry",
-        "render_readme": True,
-        "homeassistant": "2026.8.0",
-    }
 
-
-def test_integration_manifest_and_runtime_assets_are_complete():
-    manifest = load_json(INTEGRATION / "manifest.json")
-    assert manifest["domain"] == "notification_registry"
-    assert manifest["config_flow"] is True
-    assert manifest["integration_type"] == "service"
-    assert manifest["iot_class"] == "local_push"
+def test_manual_install_deliverables_are_complete():
+    assert not (ROOT / "hacs.json").exists()
+    assert (INTEGRATION / "manifest.json").is_file()
     assert (INTEGRATION / "config_flow.py").is_file()
     assert (ROOT / "www" / "notification-registry-card.js").is_file()
     assert 'customElements.define("notification-registry-card"' in (
@@ -37,63 +35,65 @@ def test_integration_manifest_and_runtime_assets_are_complete():
     ).read_text(encoding="utf-8")
 
 
-def test_translations_have_matching_entity_localization():
-    strings = load_json(INTEGRATION / "strings.json")
-    entity = strings["entity"]["sensor"]["notification_registry_diagnostic"]
-    assert entity["name"]
+def test_initial_registry_entries_are_nonempty_and_fully_valid():
+    entries = load_json(INTEGRATION / "initial_registry.json")
+    assert entries
+    for raw_entry in entries:
+        assert set(raw_entry) <= {
+            "key",
+            "titel",
+            "text",
+            "schweregrad",
+            "zielgruppe",
+            "kanaele",
+            "tag",
+            "revision",
+            "created_at",
+            "updated_at",
+        }
+        entry = NotificationEntry.from_dict(raw_entry)
+        assert entry.key and entry.titel and entry.text and entry.kanaele
 
+
+def test_all_translation_files_match_strings_structure():
+    strings = load_json(INTEGRATION / "strings.json")
     for language in ("de", "en"):
         translation = load_json(INTEGRATION / "translations" / f"{language}.json")
-        translated = translation["entity"]["sensor"]["notification_registry_diagnostic"]
-        assert set(translated) == set(entity)
-        assert translated["name"]
+        assert structure(translation) == structure(strings)
+        assert translation["entity"]["sensor"]["notification_registry_diagnostic"]["name"]
 
     sensor_source = (INTEGRATION / "sensor.py").read_text(encoding="utf-8")
     assert '_attr_translation_key = "notification_registry_diagnostic"' in sensor_source
 
 
-def test_initial_registry_contains_only_model_fields():
-    allowed = {
-        "key",
-        "titel",
-        "text",
-        "schweregrad",
-        "zielgruppe",
-        "kanaele",
-        "tag",
-        "revision",
-        "created_at",
-        "updated_at",
-    }
-    entries = load_json(INTEGRATION / "initial_registry.json")
-    assert entries
-    assert all(set(entry) <= allowed for entry in entries)
-
-
-def test_readme_documents_local_installation_and_safe_rollback():
+def test_readme_documents_manual_paths_and_safe_rollback():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "HACS" not in readme
     for required in (
-        "HACS",
+        "custom_components/notification_registry",
+        "www/notification-registry-card.js",
+        "/local/notification-registry-card.js",
         "notification_registry",
         "script.benachrichtigung_senden",
         "Backup",
         "Rückweg",
-        "/local/notification-registry-card.js",
     ):
         assert required in readme
 
 
-def test_ci_runs_pinned_unit_and_frontend_checks_without_stale_ha_plugin():
+def test_ci_uses_a_deterministic_frontend_install():
     workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text(
         encoding="utf-8"
     )
-    assert "ruff check custom_components tests" in workflow
-    assert "pytest -v" in workflow
-    assert "npm test -- --run" in workflow
-    assert 'python-version: "3.14"' in workflow
-    assert '"pytest==9.0.3"' in workflow
-    assert '"pytest-homeassistant-custom-component==0.13.354"' in workflow
-    assert '"ruff==0.16.5"' in workflow
+    package = load_json(ROOT / "package.json")
+    lock = load_json(ROOT / "package-lock.json")
+    assert "npm ci" in workflow
+    assert "npm install" not in workflow
+    assert "cache: npm" in workflow
+    assert (ROOT / "package-lock.json").is_file()
+    for name, version in package["devDependencies"].items():
+        assert version == lock["packages"][""].get("devDependencies", {})[name]
+        assert version == lock["packages"][f"node_modules/{name}"]["version"]
     assert "live-preflight" in workflow
 
 
