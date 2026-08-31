@@ -95,15 +95,23 @@ export class NotificationRegistryCard extends HTMLElement {
     this._error = null;
     this._editorEntry = null;
     this._loading = false;
-    this._loadedForHass = null;
+    this._connection = null;
+    this._loadToken = 0;
+    this._mutationToken = 0;
+    this._mediaQuery = null;
+    this._mediaListener = null;
+    this._isMobile = false;
+    this._focusReturnSelector = null;
     this._updateComplete = Promise.resolve();
     this._renderQueued = false;
   }
 
   set hass(value) {
+    const nextConnection = value?.connection || null;
+    const shouldLoad = !this._hass || (nextConnection && nextConnection !== this._connection);
     this._hass = value;
-    if (value && value !== this._loadedForHass) {
-      this._loadedForHass = value;
+    if (shouldLoad && value) {
+      this._connection = nextConnection;
       this._loadEntries();
     }
   }
@@ -118,7 +126,15 @@ export class NotificationRegistryCard extends HTMLElement {
   }
 
   connectedCallback() {
+    this._setupResponsive();
     this.requestUpdate();
+  }
+
+  disconnectedCallback() {
+    if (!this._mediaQuery || !this._mediaListener) return;
+    if (this._mediaQuery.removeEventListener) this._mediaQuery.removeEventListener("change", this._mediaListener);
+    else this._mediaQuery.removeListener?.(this._mediaListener);
+    this._mediaQuery = null;
   }
 
   getCardSize() {
@@ -144,11 +160,14 @@ export class NotificationRegistryCard extends HTMLElement {
 
   async _loadEntries() {
     if (!this._hass?.callWS) return;
+    const token = ++this._loadToken;
+    const mutationAtStart = this._mutationToken;
     this._loading = true;
     this._error = null;
     this.requestUpdate();
     try {
       const response = await this._hass.callWS({ type: "notification_registry/list" });
+      if (token !== this._loadToken || mutationAtStart !== this._mutationToken) return;
       const result = response?.result || response || {};
       this._entries = Array.isArray(result.entries) ? result.entries.map((entry) => ({ ...entry })) : [];
       this._dataRevision = result.data_revision ?? null;
@@ -156,14 +175,29 @@ export class NotificationRegistryCard extends HTMLElement {
     } catch (error) {
       this._error = errorDetails(error);
     } finally {
+      if (token !== this._loadToken) return;
       this._loading = false;
       this.requestUpdate();
     }
   }
 
+  _setupResponsive() {
+    if (this._mediaQuery || typeof window === "undefined" || !window.matchMedia) return;
+    this._mediaQuery = window.matchMedia("(max-width: 699px)");
+    this._isMobile = Boolean(this._mediaQuery.matches);
+    this._mediaListener = (event) => {
+      this._isMobile = Boolean(event.matches);
+      this.requestUpdate();
+    };
+    if (this._mediaQuery.addEventListener) this._mediaQuery.addEventListener("change", this._mediaListener);
+    else this._mediaQuery.addListener?.(this._mediaListener);
+  }
+
   _render() {
     const filtered = this._filteredEntries();
-    const title = this._config?.title || "Benachrichtigungs-Registry";
+    const title = this._escape(this._config?.title || "Benachrichtigungs-Registry");
+    const desktopHidden = this._isMobile ? "hidden" : "";
+    const mobileHidden = this._isMobile ? "" : "hidden";
     this.shadowRoot.innerHTML = `<style>${css}</style>
       <section class="card" aria-labelledby="registry-title">
         <h2 id="registry-title">${title}</h2>
@@ -174,14 +208,14 @@ export class NotificationRegistryCard extends HTMLElement {
         </div>
         <p class="status" aria-live="polite">${this._loading ? "Lade Meldungen …" : `${filtered.length} von ${this._entries.length} Einträgen`}</p>
         ${this._errorMarkup()}
-        <div class="desktop-list table-wrap">
+        <div class="desktop-list table-wrap" ${desktopHidden}>
           <table>
             <caption class="sr-only">Benachrichtigungs-Registry</caption>
             <thead><tr><th scope="col">Key</th><th scope="col">Titel</th><th scope="col">Schweregrad</th><th scope="col">Zielgruppe</th><th scope="col">Kanäle</th><th scope="col">Tag</th><th scope="col">Aktionen</th></tr></thead>
             <tbody>${filtered.map((entry) => this._tableRow(entry)).join("")}</tbody>
           </table>
         </div>
-        <div class="mobile-list" aria-label="Einträge">${filtered.map((entry) => this._mobileEntry(entry)).join("") || "<p>Keine Einträge gefunden.</p>"}</div>
+        <div class="mobile-list" aria-label="Einträge" ${mobileHidden}>${filtered.map((entry) => this._mobileEntry(entry)).join("") || "<p>Keine Einträge gefunden.</p>"}</div>
         ${this._editorEntry ? this._editorTemplate(this._editorEntry) : ""}
       </section>`;
     this._bindEvents();
@@ -197,11 +231,11 @@ export class NotificationRegistryCard extends HTMLElement {
   }
 
   _tableRow(entry) {
-    return `<tr data-entry-key="${this._escape(entry.key)}"><td class="entry-key">${this._escape(entry.key)}</td><td>${this._escape(entry.titel)}</td><td>${display(entry.schweregrad)}</td><td>${display(entry.zielgruppe)}</td><td>${(entry.kanaele || []).map(display).join(", ")}</td><td class="tag">${this._escape(entry.tag || "—")}</td><td>${this._actions(entry)}</td></tr>`;
+    return `<tr data-entry-key="${this._escape(entry.key)}"><td class="entry-key">${this._escape(entry.key)}</td><td>${this._escape(entry.titel)}</td><td>${this._display(entry.schweregrad)}</td><td>${this._display(entry.zielgruppe)}</td><td>${(entry.kanaele || []).map((channel) => this._display(channel)).join(", ")}</td><td class="tag">${this._escape(entry.tag || "—")}</td><td>${this._actions(entry)}</td></tr>`;
   }
 
   _mobileEntry(entry) {
-    return `<article class="mobile-entry" data-mobile-entry data-entry-key="${this._escape(entry.key)}"><strong class="entry-key">${this._escape(entry.key)}</strong><dl><dt>Titel</dt><dd>${this._escape(entry.titel)}</dd><dt>Text</dt><dd>${this._escape(entry.text)}</dd><dt>Schweregrad</dt><dd>${display(entry.schweregrad)}</dd><dt>Zielgruppe</dt><dd>${display(entry.zielgruppe)}</dd><dt>Kanäle</dt><dd>${(entry.kanaele || []).map(display).join(", ")}</dd><dt>Tag</dt><dd>${this._escape(entry.tag || "—")}</dd></dl>${this._actions(entry)}</article>`;
+    return `<article class="mobile-entry" data-mobile-entry data-entry-key="${this._escape(entry.key)}"><strong class="entry-key">${this._escape(entry.key)}</strong><dl><dt>Titel</dt><dd>${this._escape(entry.titel)}</dd><dt>Text</dt><dd>${this._escape(entry.text)}</dd><dt>Schweregrad</dt><dd>${this._display(entry.schweregrad)}</dd><dt>Zielgruppe</dt><dd>${this._display(entry.zielgruppe)}</dd><dt>Kanäle</dt><dd>${(entry.kanaele || []).map((channel) => this._display(channel)).join(", ")}</dd><dt>Tag</dt><dd>${this._escape(entry.tag || "—")}</dd></dl>${this._actions(entry)}</article>`;
   }
 
   _actions(entry) {
@@ -213,8 +247,11 @@ export class NotificationRegistryCard extends HTMLElement {
     const editing = Boolean(entry.revision);
     const checked = new Set(entry.kanaele || []);
     const issue = (field) => this._fieldIssue(field);
-    const field = (name, value, label, type = "text") => `<label class="field"><span>${label}</span>${type === "textarea" ? `<textarea name="${name}" ${name === "key" && editing ? "readonly" : ""} aria-invalid="${issue(name) ? "true" : "false"}">${this._escape(value || "")}</textarea>` : `<input name="${name}" type="${type}" value="${this._escape(value || "")}" ${name === "key" && editing ? "readonly" : ""} aria-invalid="${issue(name) ? "true" : "false"}>`}${issue(name) ? `<small role="alert">${this._escape(issue(name))}</small>` : ""}</label>`;
-    return `<dialog open aria-labelledby="editor-title"><form method="dialog" novalidate><h3 id="editor-title">${editing ? "Meldung bearbeiten" : "Neue Meldung"}</h3>${this._errorMarkup()}${field("key", entry.key, "Key")}${field("titel", entry.titel, "Titel")}${field("text", entry.text, "Text", "textarea")}<label class="field"><span>Schweregrad</span><select name="schweregrad">${SEVERITIES.map((value) => `<option value="${value}" ${entry.schweregrad === value ? "selected" : ""}>${display(value)}</option>`).join("")}</select></label><label class="field"><span>Zielgruppe</span><select name="zielgruppe">${TARGET_GROUPS.map((value) => `<option value="${value}" ${entry.zielgruppe === value ? "selected" : ""}>${display(value)}</option>`).join("")}</select></label><fieldset><legend>Kanäle</legend><div class="channel-list">${CHANNELS.map((value) => `<label><input type="checkbox" name="kanaele" value="${value}" ${checked.has(value) ? "checked" : ""}>${display(value)}</label>`).join("")}</div>${this._fieldIssue("kanaele") ? `<small role="alert">${this._escape(this._fieldIssue("kanaele"))}</small>` : ""}</fieldset>${field("tag", entry.tag || "", "Tag")}<div class="dialog-actions"><button type="button" class="secondary" data-action="cancel-editor">Abbrechen</button><button type="submit">Speichern</button></div></form></dialog>`;
+    const field = (name, value, label, type = "text", required = false) => { const fieldError = issue(name); const describedBy = fieldError ? `aria-describedby="${name}-error"` : ""; const requirement = required ? "required" : ""; const readOnly = name === "key" && editing ? "readonly" : ""; return `<label class="field"><span>${label}</span>${type === "textarea" ? `<textarea name="${name}" ${readOnly} ${requirement} ${describedBy} aria-invalid="${fieldError ? "true" : "false"}">${this._escape(value || "")}</textarea>` : `<input name="${name}" type="${type}" value="${this._escape(value || "")}" ${readOnly} ${requirement} ${describedBy} aria-invalid="${fieldError ? "true" : "false"}">`}${fieldError ? `<small id="${name}-error" role="alert">${this._escape(fieldError)}</small>` : ""}</label>`; };
+    const select = (name, value, label, options) => { const fieldError = issue(name); const describedBy = fieldError ? `aria-describedby="${name}-error"` : ""; return `<label class="field"><span>${label}</span><select name="${name}" required ${describedBy} aria-invalid="${fieldError ? "true" : "false"}">${options.map((option) => `<option value="${this._escape(option)}" ${value === option ? "selected" : ""}>${this._display(option)}</option>`).join("")}</select>${fieldError ? `<small id="${name}-error" role="alert">${this._escape(fieldError)}</small>` : ""}</label>`; };
+    const channelsError = this._fieldIssue("kanaele");
+    const channelsDescription = channelsError ? 'aria-describedby="kanaele-error"' : "";
+    return `<dialog aria-labelledby="editor-title"><form method="dialog" novalidate><h3 id="editor-title">${editing ? "Meldung bearbeiten" : "Neue Meldung"}</h3>${this._errorMarkup()}${field("key", entry.key, "Key", "text", true)}${field("titel", entry.titel, "Titel", "text", true)}${field("text", entry.text, "Text", "textarea", true)}${select("schweregrad", entry.schweregrad, "Schweregrad", SEVERITIES)}${select("zielgruppe", entry.zielgruppe, "Zielgruppe", TARGET_GROUPS)}<fieldset ${channelsDescription}><legend>Kanäle</legend><div class="channel-list">${CHANNELS.map((value) => `<label><input type="checkbox" name="kanaele" value="${this._escape(value)}" ${checked.has(value) ? "checked" : ""}>${this._display(value)}</label>`).join("")}</div>${channelsError ? `<small id="kanaele-error" role="alert">${this._escape(channelsError)}</small>` : ""}</fieldset>${field("tag", entry.tag || "", "Tag")}<div class="dialog-actions"><button type="button" class="secondary" data-action="cancel-editor">Abbrechen</button><button type="submit">Speichern</button></div></form></dialog>`;
   }
 
   _bindEvents() {
@@ -225,7 +262,12 @@ export class NotificationRegistryCard extends HTMLElement {
     this.shadowRoot.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => this._handleAction(button.dataset.action, button.dataset.key)));
     this.shadowRoot.querySelector("form")?.addEventListener("submit", (event) => this._submitEditor(event));
     this.shadowRoot.querySelector("[data-action=cancel-editor]")?.addEventListener("click", () => this.closeEditor());
-    this.shadowRoot.querySelector("dialog")?.addEventListener("cancel", (event) => { event.preventDefault(); this.closeEditor(); });
+    const dialog = this.shadowRoot.querySelector("dialog");
+    if (dialog) {
+      try { dialog.showModal?.(); } catch (_error) { dialog.setAttribute("open", ""); }
+      this.shadowRoot.querySelector("input[name=key]")?.focus();
+      dialog.addEventListener("cancel", (event) => { event.preventDefault(); this.closeEditor(); });
+    }
   }
 
   _handleAction(action, key) {
@@ -239,6 +281,8 @@ export class NotificationRegistryCard extends HTMLElement {
   }
 
   openEditor(entry = null) {
+    const key = entry?.key;
+    this._focusReturnSelector = key ? `[data-action="edit"][data-key="${this._escape(key)}"]` : '[data-action="create"]';
     this._editorEntry = entry ? { ...entry, kanaele: [...(entry.kanaele || [])] } : { key: "", titel: "", text: "", schweregrad: "info", zielgruppe: "alle", kanaele: ["persistent"], tag: "" };
     this._error = null;
     this._formIssues = {};
@@ -246,14 +290,22 @@ export class NotificationRegistryCard extends HTMLElement {
   }
 
   closeEditor() {
+    const dialog = this.shadowRoot.querySelector("dialog");
+    dialog?.close?.();
+    const returnSelector = this._focusReturnSelector;
     this._editorEntry = null;
     this._error = null;
     this._formIssues = {};
     this.requestUpdate();
+    this.updateComplete.then(() => this.shadowRoot.querySelector(returnSelector)?.focus());
   }
 
   _fieldIssue(field) {
     return this._formIssues?.[field] || "";
+  }
+
+  _display(value) {
+    return this._escape(display(value));
   }
 
   _errorMarkup() {
@@ -270,7 +322,10 @@ export class NotificationRegistryCard extends HTMLElement {
     else if (!KEY_PATTERN.test(value.key.trim())) issues.key = "Key muss bereich::name entsprechen.";
     if (!value.titel?.trim()) issues.titel = "Titel darf nicht leer sein.";
     if (!value.text?.trim()) issues.text = "Text darf nicht leer sein.";
+    if (!SEVERITIES.includes(value.schweregrad)) issues.schweregrad = "Ungültiger Schweregrad.";
+    if (!TARGET_GROUPS.includes(value.zielgruppe)) issues.zielgruppe = "Ungültige Zielgruppe.";
     if (!value.kanaele.length) issues.kanaele = "Mindestens ein Kanal ist erforderlich.";
+    else if (value.kanaele.some((channel) => !CHANNELS.includes(channel))) issues.kanaele = "Ungültiger Kanal.";
     if (value.schweregrad === "kritisch" && !(value.kanaele.includes("mobil") && value.kanaele.includes("persistent"))) issues.kanaele = "Kritische Einträge benötigen mobil und persistent.";
     return { value: { ...value, key: value.key?.trim(), titel: value.titel?.trim(), text: value.text?.trim(), tag: value.tag?.trim() || null }, issues };
   }
@@ -306,6 +361,7 @@ export class NotificationRegistryCard extends HTMLElement {
   }
 
   _replaceEntry(entry) {
+    this._mutationToken += 1;
     const index = this._entries.findIndex((candidate) => candidate.key === entry.key);
     if (index < 0) this._entries = [...this._entries, { ...entry }];
     else this._entries = this._entries.map((candidate, position) => position === index ? { ...entry } : candidate);
@@ -337,11 +393,12 @@ export class NotificationRegistryCard extends HTMLElement {
     try {
       const response = await this._hass.callWS({ type: "notification_registry/rename", key: entry.key, new_key: newKey, expected_revision: entry.revision, ...(references.length ? { confirm_references: true } : {}) });
       const result = response?.result || response || {};
+      this._mutationToken += 1;
       this._entries = this._entries.filter((candidate) => candidate.key !== entry.key);
       if (result.entry) this._replaceEntry(result.entry);
       if (result.data_revision !== undefined) this._dataRevision = result.data_revision;
       this.requestUpdate();
-    } catch (error) { this._error = errorDetails(error); this.requestUpdate(); }
+    } catch (error) { const details = errorDetails(error); this._error = details; if (details.code === "revision_conflict") { if (details.current) this._replaceEntry(details.current); else this._loadEntries(); } else this.requestUpdate(); }
   }
 
   async _delete(entry) {
@@ -349,10 +406,10 @@ export class NotificationRegistryCard extends HTMLElement {
     try {
       const response = await this._hass.callWS({ type: "notification_registry/delete", key: entry.key, expected_revision: entry.revision });
       const result = response?.result || response || {};
-      if (result.deleted) this._entries = this._entries.filter((candidate) => candidate.key !== entry.key);
+      if (result.deleted) { this._mutationToken += 1; this._entries = this._entries.filter((candidate) => candidate.key !== entry.key); }
       if (result.data_revision !== undefined) this._dataRevision = result.data_revision;
       this.requestUpdate();
-    } catch (error) { this._error = errorDetails(error); this.requestUpdate(); }
+    } catch (error) { const details = errorDetails(error); this._error = details; if (details.code === "revision_conflict") { if (details.current) this._replaceEntry(details.current); else this._loadEntries(); } else this.requestUpdate(); }
   }
 
   _escape(value) {

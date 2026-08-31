@@ -34,6 +34,13 @@ function fakeHass(entries = [criticalEntry]) {
   };
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
 function makeCard(entries) {
   const card = document.createElement("notification-registry-card");
   card.hass = fakeHass(entries);
@@ -49,6 +56,8 @@ async function settle(card) {
 describe("notification-registry-card", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
+    HTMLDialogElement.prototype.showModal = vi.fn();
+    HTMLDialogElement.prototype.close = vi.fn();
     vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({
       matches: false,
       media: "(max-width: 699px)",
@@ -79,6 +88,57 @@ describe("notification-registry-card", () => {
     await settle(card);
 
     expect(hass.callWS).toHaveBeenCalledWith({ type: "notification_registry/list" });
+  });
+
+  it("does not reload when Home Assistant assigns a routine new object identity", async () => {
+    const hass = fakeHass([criticalEntry]);
+    const card = document.createElement("notification-registry-card");
+    card.hass = hass;
+    document.body.append(card);
+    await settle(card);
+    card.hass = { ...hass, states: {} };
+    await settle(card);
+
+    expect(hass.callWS).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores stale list responses after a newer Home Assistant connection load", async () => {
+    const first = deferred();
+    const second = deferred();
+    const firstHass = { connection: {}, callWS: vi.fn().mockReturnValue(first.promise) };
+    const secondHass = { connection: {}, callWS: vi.fn().mockReturnValue(second.promise) };
+    const card = document.createElement("notification-registry-card");
+    card.hass = firstHass;
+    document.body.append(card);
+    await card.updateComplete;
+    card.hass = secondHass;
+    second.resolve({ entries: [infoEntry], data_revision: 2, schema_version: 1 });
+    await Promise.resolve();
+    await settle(card);
+    first.resolve({ entries: [criticalEntry], data_revision: 1, schema_version: 1 });
+    await Promise.resolve();
+    await settle(card);
+
+    expect(card.shadowRoot.textContent).toContain(infoEntry.key);
+    expect(card.shadowRoot.textContent).not.toContain(criticalEntry.key);
+  });
+
+  it("does not let an older list response overwrite a confirmed CRUD entry", async () => {
+    const list = deferred();
+    const hass = { callWS: vi.fn().mockReturnValue(list.promise) };
+    const card = document.createElement("notification-registry-card");
+    card.hass = hass;
+    document.body.append(card);
+    await card.updateComplete;
+    const created = { ...infoEntry, key: "system::new" };
+    card._replaceEntry(created);
+    await settle(card);
+    list.resolve({ entries: [criticalEntry], data_revision: 1, schema_version: 1 });
+    await Promise.resolve();
+    await settle(card);
+
+    expect(card.shadowRoot.textContent).toContain(created.key);
+    expect(card.shadowRoot.textContent).not.toContain(criticalEntry.key);
   });
 
   it("filters locally by search text and severity", async () => {
@@ -246,5 +306,151 @@ describe("notification-registry-card", () => {
     await settle(card);
 
     expect(card.shadowRoot.querySelector("dialog")).toBeNull();
+  });
+
+  it("uses showModal and close, focuses the first field, and restores focus", async () => {
+    const card = makeCard([criticalEntry]);
+    await settle(card);
+    const open = card.shadowRoot.querySelector('[data-action="edit"]');
+    open.focus();
+    card.openEditor(criticalEntry);
+    await settle(card);
+    const dialog = card.shadowRoot.querySelector("dialog");
+    expect(dialog.showModal).toHaveBeenCalledTimes(1);
+    expect(card.shadowRoot.activeElement).toBe(card.shadowRoot.querySelector("input[name=key]"));
+    card.closeEditor();
+    await settle(card);
+    expect(dialog.close).toHaveBeenCalledTimes(1);
+    expect(card.shadowRoot.activeElement?.dataset.action).toBe("edit");
+    expect(card.shadowRoot.activeElement?.dataset.key).toBe(criticalEntry.key);
+  });
+
+  it("escapes configuration titles and unknown dynamic values", async () => {
+    const hostile = { ...criticalEntry, key: "xss::key", schweregrad: "<img src=x onerror=alert(1)>", titel: "<script>alert(1)</script>" };
+    const card = document.createElement("notification-registry-card");
+    card.setConfig({ title: "<img src=x onerror=alert(1)>" });
+    card.hass = fakeHass([hostile]);
+    document.body.append(card);
+    await settle(card);
+
+    expect(card.shadowRoot.querySelector("script")).toBeNull();
+    expect(card.shadowRoot.querySelector("img")).toBeNull();
+    expect(card.shadowRoot.textContent).toContain(hostile.titel);
+  });
+
+  it("updates an entry using its revision and server-confirmed response", async () => {
+    const updated = { ...criticalEntry, titel: "Updated", revision: 4 };
+    const hass = fakeHass([criticalEntry]);
+    hass.callWS
+      .mockResolvedValueOnce({ entries: [criticalEntry], data_revision: 3, schema_version: 1 })
+      .mockResolvedValueOnce({ entry: updated, data_revision: 4 });
+    const card = document.createElement("notification-registry-card");
+    card.hass = hass;
+    document.body.append(card);
+    await settle(card);
+    card.openEditor(criticalEntry);
+    await settle(card);
+    const form = card.shadowRoot.querySelector("form");
+    form.elements.titel.value = updated.titel;
+    form.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+    await settle(card);
+
+    expect(hass.callWS).toHaveBeenLastCalledWith(expect.objectContaining({ type: "notification_registry/update", key: criticalEntry.key, expected_revision: criticalEntry.revision }));
+    expect(card.shadowRoot.textContent).toContain(updated.titel);
+  });
+
+  it("duplicates an entry and deletes only after confirmation", async () => {
+    const duplicate = { ...criticalEntry, key: "technikraum::kopie", revision: 1 };
+    const hass = fakeHass([criticalEntry]);
+    hass.callWS
+      .mockResolvedValueOnce({ entries: [criticalEntry], data_revision: 3, schema_version: 1 })
+      .mockResolvedValueOnce({ entry: duplicate, data_revision: 4 })
+      .mockResolvedValueOnce({ deleted: true, data_revision: 5 });
+    vi.stubGlobal("prompt", vi.fn().mockReturnValue(duplicate.key));
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+    const card = document.createElement("notification-registry-card");
+    card.hass = hass;
+    document.body.append(card);
+    await settle(card);
+    card.shadowRoot.querySelector('[data-action="duplicate"]').click();
+    await settle(card);
+    expect(card.shadowRoot.textContent).toContain(duplicate.key);
+    card.shadowRoot.querySelector('[data-action="delete"][data-key="technikraum::wasseralarm"]').click();
+    await settle(card);
+    expect(hass.callWS).toHaveBeenLastCalledWith({ type: "notification_registry/delete", key: criticalEntry.key, expected_revision: criticalEntry.revision });
+    expect(card.shadowRoot.textContent).not.toContain(criticalEntry.key);
+  });
+
+  it("shows required-field and invalid-channel validation without sending", async () => {
+    const hass = fakeHass([]);
+    const card = document.createElement("notification-registry-card");
+    card.hass = hass;
+    document.body.append(card);
+    await settle(card);
+    card.openEditor();
+    await settle(card);
+    const form = card.shadowRoot.querySelector("form");
+    form.querySelector('input[value="persistent"]').checked = false;
+    form.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+    await settle(card);
+
+    expect(hass.callWS).toHaveBeenCalledTimes(1);
+    expect(card.shadowRoot.querySelector('input[name="key"]').getAttribute("aria-invalid")).toBe("true");
+    expect(card.shadowRoot.querySelector("[role=alert]")).not.toBeNull();
+  });
+
+  it("refuses a referenced rename until the user confirms", async () => {
+    const hass = fakeHass([criticalEntry]);
+    hass.callWS.mockResolvedValueOnce({ entries: [criticalEntry], data_revision: 3, schema_version: 1 }).mockResolvedValueOnce({ references: [{ entity_id: "automation.water" }] });
+    vi.stubGlobal("prompt", vi.fn().mockReturnValue("technikraum::new"));
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(false));
+    const card = document.createElement("notification-registry-card");
+    card.hass = hass;
+    document.body.append(card);
+    await settle(card);
+    card.shadowRoot.querySelector('[data-action="rename"]').click();
+    await settle(card);
+
+    expect(hass.callWS).toHaveBeenCalledTimes(2);
+    expect(card.shadowRoot.textContent).toContain(criticalEntry.key);
+  });
+
+  it("applies current entries from rename and delete revision conflicts", async () => {
+    const renamedCurrent = { ...criticalEntry, titel: "Rename current", revision: 4 };
+    const deletedCurrent = { ...criticalEntry, titel: "Delete current", revision: 5 };
+    const hass = fakeHass([criticalEntry]);
+    hass.callWS
+      .mockResolvedValueOnce({ entries: [criticalEntry], data_revision: 3, schema_version: 1 })
+      .mockResolvedValueOnce({ references: [] })
+      .mockRejectedValueOnce(Object.assign(new Error("rename conflict"), { code: "revision_conflict", current: renamedCurrent }))
+      .mockRejectedValueOnce(Object.assign(new Error("delete conflict"), { code: "revision_conflict", current: deletedCurrent }));
+    vi.stubGlobal("prompt", vi.fn().mockReturnValue("technikraum::new"));
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+    const card = document.createElement("notification-registry-card");
+    card.hass = hass;
+    document.body.append(card);
+    await settle(card);
+    card.shadowRoot.querySelector('[data-action="rename"]').click();
+    await settle(card);
+    expect(card.shadowRoot.textContent).toContain(renamedCurrent.titel);
+    card.shadowRoot.querySelector('[data-action="delete"]').click();
+    await settle(card);
+    expect(card.shadowRoot.textContent).toContain(deletedCurrent.titel);
+  });
+
+  it("switches visible layout semantics when matchMedia changes to 360px", async () => {
+    const listeners = [];
+    let width = 1280;
+    const media = { get matches() { return width < 700; }, media: "(max-width: 699px)", addEventListener: (_type, listener) => listeners.push(listener), removeEventListener: vi.fn() };
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue(media));
+    const card = makeCard([criticalEntry]);
+    await settle(card);
+    expect(card.shadowRoot.querySelector(".desktop-list").hidden).toBe(false);
+    expect(card.shadowRoot.querySelector(".mobile-list").hidden).toBe(true);
+    width = 360;
+    listeners.forEach((listener) => listener({ matches: true }));
+    await settle(card);
+    expect(card.shadowRoot.querySelector(".desktop-list").hidden).toBe(true);
+    expect(card.shadowRoot.querySelector(".mobile-list").hidden).toBe(false);
   });
 });
