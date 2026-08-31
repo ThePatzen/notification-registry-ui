@@ -102,6 +102,8 @@ export class NotificationRegistryCard extends HTMLElement {
     this._mediaListener = null;
     this._isMobile = false;
     this._focusReturnSelector = null;
+    this._focusReturnNode = null;
+    this._focusReturnKey = null;
     this._updateComplete = Promise.resolve();
     this._renderQueued = false;
   }
@@ -173,6 +175,7 @@ export class NotificationRegistryCard extends HTMLElement {
       this._dataRevision = result.data_revision ?? null;
       this._schemaVersion = result.schema_version ?? null;
     } catch (error) {
+      if (token !== this._loadToken || mutationAtStart !== this._mutationToken) return;
       this._error = errorDetails(error);
     } finally {
       if (token !== this._loadToken) return;
@@ -251,7 +254,7 @@ export class NotificationRegistryCard extends HTMLElement {
     const select = (name, value, label, options) => { const fieldError = issue(name); const describedBy = fieldError ? `aria-describedby="${name}-error"` : ""; return `<label class="field"><span>${label}</span><select name="${name}" required ${describedBy} aria-invalid="${fieldError ? "true" : "false"}">${options.map((option) => `<option value="${this._escape(option)}" ${value === option ? "selected" : ""}>${this._display(option)}</option>`).join("")}</select>${fieldError ? `<small id="${name}-error" role="alert">${this._escape(fieldError)}</small>` : ""}</label>`; };
     const channelsError = this._fieldIssue("kanaele");
     const channelsDescription = channelsError ? 'aria-describedby="kanaele-error"' : "";
-    return `<dialog aria-labelledby="editor-title"><form method="dialog" novalidate><h3 id="editor-title">${editing ? "Meldung bearbeiten" : "Neue Meldung"}</h3>${this._errorMarkup()}${field("key", entry.key, "Key", "text", true)}${field("titel", entry.titel, "Titel", "text", true)}${field("text", entry.text, "Text", "textarea", true)}${select("schweregrad", entry.schweregrad, "Schweregrad", SEVERITIES)}${select("zielgruppe", entry.zielgruppe, "Zielgruppe", TARGET_GROUPS)}<fieldset ${channelsDescription}><legend>Kanäle</legend><div class="channel-list">${CHANNELS.map((value) => `<label><input type="checkbox" name="kanaele" value="${this._escape(value)}" ${checked.has(value) ? "checked" : ""}>${this._display(value)}</label>`).join("")}</div>${channelsError ? `<small id="kanaele-error" role="alert">${this._escape(channelsError)}</small>` : ""}</fieldset>${field("tag", entry.tag || "", "Tag")}<div class="dialog-actions"><button type="button" class="secondary" data-action="cancel-editor">Abbrechen</button><button type="submit">Speichern</button></div></form></dialog>`;
+    return `<dialog aria-labelledby="editor-title"><form method="dialog" novalidate><h3 id="editor-title">${editing ? "Meldung bearbeiten" : "Neue Meldung"}</h3>${this._errorMarkup()}${field("key", entry.key, "Key", "text", true)}${field("titel", entry.titel, "Titel", "text", true)}${field("text", entry.text, "Text", "textarea", true)}${select("schweregrad", entry.schweregrad, "Schweregrad", SEVERITIES)}${select("zielgruppe", entry.zielgruppe, "Zielgruppe", TARGET_GROUPS)}<fieldset aria-required="true" ${channelsDescription}><legend>Kanäle</legend><div class="channel-list">${CHANNELS.map((value) => `<label><input type="checkbox" name="kanaele" value="${this._escape(value)}" ${checked.has(value) ? "checked" : ""}>${this._display(value)}</label>`).join("")}</div>${channelsError ? `<small id="kanaele-error" role="alert">${this._escape(channelsError)}</small>` : ""}</fieldset>${field("tag", entry.tag || "", "Tag")}<div class="dialog-actions"><button type="button" class="secondary" data-action="cancel-editor">Abbrechen</button><button type="submit">Speichern</button></div></form></dialog>`;
   }
 
   _bindEvents() {
@@ -281,6 +284,8 @@ export class NotificationRegistryCard extends HTMLElement {
   }
 
   openEditor(entry = null) {
+    this._focusReturnNode = this.shadowRoot.activeElement;
+    this._focusReturnKey = entry?.key || null;
     const key = entry?.key;
     this._focusReturnSelector = key ? `[data-action="edit"][data-key="${this._escape(key)}"]` : '[data-action="create"]';
     this._editorEntry = entry ? { ...entry, kanaele: [...(entry.kanaele || [])] } : { key: "", titel: "", text: "", schweregrad: "info", zielgruppe: "alle", kanaele: ["persistent"], tag: "" };
@@ -292,12 +297,20 @@ export class NotificationRegistryCard extends HTMLElement {
   closeEditor() {
     const dialog = this.shadowRoot.querySelector("dialog");
     dialog?.close?.();
-    const returnSelector = this._focusReturnSelector;
+    const returnNode = this._focusReturnNode;
+    const returnKey = this._focusReturnKey;
     this._editorEntry = null;
     this._error = null;
     this._formIssues = {};
     this.requestUpdate();
-    this.updateComplete.then(() => this.shadowRoot.querySelector(returnSelector)?.focus());
+    this.updateComplete.then(() => {
+      if (returnNode?.isConnected && !returnNode.hidden && getComputedStyle(returnNode).display !== "none") returnNode.focus();
+      if (returnKey) {
+        const scope = this._isMobile ? ".mobile-list" : ".desktop-list";
+        const opener = [...this.shadowRoot.querySelectorAll(`${scope} [data-action="edit"]`)].find((candidate) => candidate.dataset.key === returnKey);
+        opener?.focus();
+      } else this.shadowRoot.querySelector('[data-action="create"]')?.focus();
+    });
   }
 
   _fieldIssue(field) {

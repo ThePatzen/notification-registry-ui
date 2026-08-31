@@ -123,6 +123,28 @@ describe("notification-registry-card", () => {
     expect(card.shadowRoot.textContent).not.toContain(criticalEntry.key);
   });
 
+  it("ignores a stale list failure after a newer connection load succeeds", async () => {
+    const first = deferred();
+    const second = deferred();
+    const firstHass = { connection: {}, callWS: vi.fn().mockReturnValue(first.promise) };
+    const secondHass = { connection: {}, callWS: vi.fn().mockReturnValue(second.promise) };
+    const card = document.createElement("notification-registry-card");
+    card.hass = firstHass;
+    document.body.append(card);
+    await card.updateComplete;
+    card.hass = secondHass;
+    second.resolve({ entries: [infoEntry], data_revision: 2, schema_version: 1 });
+    await Promise.resolve();
+    await settle(card);
+    first.reject(new Error("stale connection failed"));
+    await Promise.resolve();
+    await settle(card);
+
+    expect(card.shadowRoot.textContent).toContain(infoEntry.key);
+    expect(card.shadowRoot.querySelector("[role=alert]")).toBeNull();
+    expect(card._error).toBeNull();
+  });
+
   it("does not let an older list response overwrite a confirmed CRUD entry", async () => {
     const list = deferred();
     const hass = { callWS: vi.fn().mockReturnValue(list.promise) };
@@ -323,6 +345,34 @@ describe("notification-registry-card", () => {
     expect(dialog.close).toHaveBeenCalledTimes(1);
     expect(card.shadowRoot.activeElement?.dataset.action).toBe("edit");
     expect(card.shadowRoot.activeElement?.dataset.key).toBe(criticalEntry.key);
+  });
+
+  it("restores focus to the visible mobile opener on a mobile layout", async () => {
+    const listeners = [];
+    const media = { matches: true, media: "(max-width: 699px)", addEventListener: (_type, listener) => listeners.push(listener), removeEventListener: vi.fn() };
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue(media));
+    const card = makeCard([criticalEntry]);
+    await settle(card);
+    const mobileOpen = card.shadowRoot.querySelector('.mobile-entry [data-action="edit"]');
+    card.openEditor(criticalEntry);
+    await settle(card);
+    card.closeEditor();
+    await settle(card);
+
+    expect(card.shadowRoot.activeElement).toBe(card.shadowRoot.querySelector('.mobile-entry [data-action="edit"]'));
+    expect(card.shadowRoot.activeElement?.closest(".desktop-list")).toBeNull();
+    expect(listeners).toHaveLength(1);
+  });
+
+  it("marks the channel checkbox group as required without native checkbox requiredness", async () => {
+    const card = makeCard([]);
+    await settle(card);
+    card.openEditor();
+    await settle(card);
+
+    const group = card.shadowRoot.querySelector("fieldset");
+    expect(group.getAttribute("aria-required")).toBe("true");
+    expect([...group.querySelectorAll('input[name="kanaele"]')].every((input) => !input.required)).toBe(true);
   });
 
   it("escapes configuration titles and unknown dynamic values", async () => {
