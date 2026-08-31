@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .const import DOMAIN
@@ -12,11 +13,28 @@ try:
 except ImportError:  # pragma: no cover - used by focused tests without HA
 
     class Entity:
-        _attr_entity_id = None
+        _attr_name = None
+        hass = None
+
+        @property
+        def name(self) -> str | None:
+            return self._attr_name
 
         @property
         def entity_id(self) -> str:
-            return self._attr_entity_id
+            object_id = re.sub(
+                r"[^a-z0-9]+", "_", (self.name or "entity").lower()
+            ).strip("_")
+            return f"sensor.{object_id}"
+
+        async def async_added_to_hass(self) -> None:
+            return None
+
+        async def async_will_remove_from_hass(self) -> None:
+            return None
+
+        def async_write_ha_state(self) -> None:
+            return None
 
     class SensorEntity(Entity):
         @property
@@ -31,14 +49,30 @@ except ImportError:  # pragma: no cover - used by focused tests without HA
 class NotificationRegistrySensor(SensorEntity):
     """Expose count and storage metadata, never notification content."""
 
-    _attr_entity_id = "sensor.benachrichtigungs_registry"
     _attr_name = "Benachrichtigungs-Registry"
+    _attr_has_entity_name = True
     _attr_unique_id = "notification_registry_diagnostic"
     _attr_should_poll = False
 
     def __init__(self, registry: Any):
         self._registry = registry
         self._attr_available = True
+        self._remove_registry_listener = None
+
+    def _registry_changed(self, _snapshot: Any) -> None:
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._remove_registry_listener = self._registry.add_listener(
+            self._registry_changed
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._remove_registry_listener is not None:
+            self._remove_registry_listener()
+            self._remove_registry_listener = None
+        await super().async_will_remove_from_hass()
 
     @property
     def native_value(self) -> int:

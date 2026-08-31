@@ -83,6 +83,31 @@ async def test_failed_save_keeps_previous_snapshot(registry, valid_entry):
 
 
 @pytest.mark.asyncio
+async def test_post_commit_listener_receives_new_snapshot(registry, valid_entry):
+    instance, _ = registry
+    snapshots = []
+    remove_listener = instance.add_listener(snapshots.append)
+
+    await instance.create(valid_entry(key="test::one"))
+
+    assert snapshots == [instance.snapshot()]
+    remove_listener()
+
+
+@pytest.mark.asyncio
+async def test_failed_save_does_not_notify_post_commit_listener(registry, valid_entry):
+    instance, store = registry
+    snapshots = []
+    instance.add_listener(snapshots.append)
+    store.fail_next_save = True
+
+    with pytest.raises(RegistrySaveError):
+        await instance.create(valid_entry(key="test::failed"))
+
+    assert snapshots == []
+
+
+@pytest.mark.asyncio
 async def test_duplicate_key_is_rejected_without_save(registry, valid_entry):
     instance, store = registry
     await instance.create(valid_entry(key="test::one"))

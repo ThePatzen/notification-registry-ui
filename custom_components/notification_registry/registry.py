@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -29,6 +29,9 @@ class DuplicateKeyError(RegistryError):
     """Raised when an operation would create an existing key."""
 
 
+RegistryListener = Callable[[RegistrySnapshot], None]
+
+
 class NotificationRegistry:
     def __init__(
         self,
@@ -42,6 +45,7 @@ class NotificationRegistry:
         )
         self._snapshot = snapshot or RegistrySnapshot()
         self._lock = asyncio.Lock()
+        self._listeners: list[RegistryListener] = []
 
     @classmethod
     async def async_create(
@@ -70,6 +74,27 @@ class NotificationRegistry:
         return next(
             (entry for entry in self._snapshot.entries if entry.key == key), None
         )
+
+    def add_listener(self, listener: RegistryListener) -> Callable[[], None]:
+        """Subscribe to snapshots after successful mutations.
+
+        The returned callback is safe to invoke more than once. Listeners are
+        synchronous and receive the already-swapped immutable snapshot.
+        """
+        self._listeners.append(listener)
+        removed = False
+
+        def remove_listener() -> None:
+            nonlocal removed
+            if removed:
+                return
+            removed = True
+            try:
+                self._listeners.remove(listener)
+            except ValueError:
+                pass
+
+        return remove_listener
 
     async def create(
         self, data: Mapping[str, Any] | NotificationEntry
@@ -194,3 +219,10 @@ class NotificationRegistry:
         except Exception as err:
             raise RegistrySaveError("Could not save notification registry.") from err
         self._snapshot = candidate
+        for listener in tuple(self._listeners):
+            try:
+                listener(candidate)
+            except Exception:  # noqa: BLE001, S112
+                # A diagnostic observer must not turn a committed mutation into
+                # a failed one or roll back the in-memory snapshot.
+                continue

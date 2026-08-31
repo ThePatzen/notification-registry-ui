@@ -71,7 +71,7 @@ async def setup_integration(monkeypatch):
         {
             "key": "technikraum::wasseralarm",
             "titel": "Wasseralarm",
-            "text": "Wasser erkannt",
+            "text": "Wasser bei {geraet}",
             "schweregrad": "kritisch",
             "zielgruppe": "david",
             "kanaele": ["mobil", "persistent"],
@@ -136,6 +136,47 @@ async def test_resolve_service_rejects_unknown_key(setup_integration):
 
 
 @pytest.mark.asyncio
+async def test_resolve_service_serializes_missing_placeholders(setup_integration):
+    response = await setup_integration.services.async_call(
+        DOMAIN,
+        "resolve",
+        {"key": "technikraum::wasseralarm"},
+        return_response=True,
+    )
+
+    assert response["text"] == "Wasser bei {geraet}"
+    assert response["missing_placeholders"] == ["geraet"]
+
+
+@pytest.mark.asyncio
 async def test_resolve_service_is_response_only(setup_integration):
     registration = setup_integration.services.registrations[0]
     assert registration[2]["supports_response"].name == "ONLY"
+
+
+@pytest.mark.asyncio
+async def test_resolve_service_schema_validates_key_and_payload(setup_integration):
+    schema = setup_integration.services.registrations[0][2]["schema"]
+
+    assert schema({"key": "technikraum::wasseralarm"})["payload"] == {}
+    with pytest.raises(Exception):  # noqa: B017
+        schema({"key": ""})
+    with pytest.raises(Exception):  # noqa: B017
+        schema({"key": 42})
+    with pytest.raises(Exception):  # noqa: B017
+        schema({"key": "technikraum::wasseralarm", "payload": []})
+
+
+@pytest.mark.asyncio
+async def test_resolve_service_reports_unavailable_registry():
+    from custom_components.notification_registry import services
+
+    hass = FakeHass(FakeServices(), FakeConfigEntries(), {})
+    services.async_register_services(hass)
+    with pytest.raises(services.HomeAssistantError, match="registry_unavailable"):
+        await hass.services.async_call(
+            DOMAIN,
+            "resolve",
+            {"key": "technikraum::wasseralarm"},
+            return_response=True,
+        )

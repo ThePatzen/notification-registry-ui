@@ -38,7 +38,52 @@ except ImportError:  # pragma: no cover - exercised by the focused API doubles
             return None
 
 
+try:
+    import voluptuous as vol
+except ImportError:  # pragma: no cover - only used without HA dependencies
+
+    class _FallbackSchema:
+        def __call__(self, data: Any) -> dict[str, Any]:
+            if not isinstance(data, Mapping):
+                raise TypeError("service data must be an object")
+            key = data.get("key")
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("key must be a non-empty string")
+            payload = data.get("payload", {})
+            if not isinstance(payload, Mapping):
+                raise TypeError("payload must be an object")
+            return {**data, "payload": payload}
+
+    class _FallbackVoluptuous:
+        Schema = lambda _self, _schema: _FallbackSchema()
+
+    vol = _FallbackVoluptuous()
+
+
 SERVICE_RESOLVE = "resolve"
+
+
+def _non_empty_string(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise vol.Invalid("must be a non-empty string")
+    return value
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise vol.Invalid("must be an object")
+    return value
+
+
+if hasattr(vol, "Required"):
+    SERVICE_SCHEMA = vol.Schema(
+        {
+            vol.Required("key"): _non_empty_string,
+            vol.Optional("payload", default={}): _mapping,
+        }
+    )
+else:
+    SERVICE_SCHEMA = vol.Schema({})
 
 
 async def _async_load_registry(hass: Any, _entry: Any) -> NotificationRegistry:
@@ -105,6 +150,7 @@ def async_register_services(hass: Any) -> None:
         DOMAIN,
         SERVICE_RESOLVE,
         handle,
+        schema=SERVICE_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
 
