@@ -26,12 +26,20 @@ def structure(value):
 
 
 def test_manual_install_deliverables_are_complete():
-    assert not (ROOT / "hacs.json").exists()
+    hacs = load_json(ROOT / "hacs.json")
+    assert hacs["name"] == "Notification Registry"
+    assert hacs["content_in_root"] is False
+    assert hacs["homeassistant"] == "2026.8.0"
+    assert hacs["render_readme"] is True
+    manifest = load_json(INTEGRATION / "manifest.json")
+    assert manifest["codeowners"] == ["@ThePatzen"]
+    assert manifest["issue_tracker"].endswith("/issues")
+    assert manifest["dependencies"] == ["frontend", "http", "lovelace"]
     assert (INTEGRATION / "manifest.json").is_file()
     assert (INTEGRATION / "config_flow.py").is_file()
-    assert (ROOT / "www" / "notification-registry-card.js").is_file()
+    assert (INTEGRATION / "frontend" / "notification-registry-card.js").is_file()
     assert 'customElements.define("notification-registry-card"' in (
-        ROOT / "www" / "notification-registry-card.js"
+        INTEGRATION / "frontend" / "notification-registry-card.js"
     ).read_text(encoding="utf-8")
 
 
@@ -68,11 +76,12 @@ def test_all_translation_files_match_strings_structure():
 
 def test_readme_documents_manual_paths_and_safe_rollback():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "HACS" not in readme
+    assert "HACS" in readme
+    assert "ThePatzen/notification-registry-ui" in readme
     for required in (
         "custom_components/notification_registry",
-        "www/notification-registry-card.js",
-        "/local/notification-registry-card.js",
+        "custom_components/notification_registry/frontend/notification-registry-card.js",
+        "/notification_registry/notification-registry-card.js",
         "notification_registry",
         "script.benachrichtigung_senden",
         "Backup",

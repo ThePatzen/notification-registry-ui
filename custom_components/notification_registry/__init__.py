@@ -6,6 +6,7 @@ from typing import Any
 
 from . import services, websocket_api
 from .const import DOMAIN
+from .frontend import async_register_frontend
 
 PLATFORMS = ["sensor"]
 
@@ -13,6 +14,7 @@ PLATFORMS = ["sensor"]
 async def async_setup(hass: Any, _config: dict[str, Any]) -> bool:
     hass.data.setdefault(DOMAIN, {})
     websocket_api.async_register_commands(hass)
+    await async_register_frontend(hass)
     return True
 
 

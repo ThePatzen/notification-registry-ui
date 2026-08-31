@@ -1,25 +1,38 @@
 # Notification Registry für Home Assistant
 
-Lokale Custom Integration für eine versionierte Benachrichtigungs-Registry mit
-der Lovelace-Karte `custom:notification-registry-card`. Die Integration und
-Karte werden zunächst als gemeinsam versionierte lokale Komponenten ausgeliefert.
+Custom Integration für eine versionierte Benachrichtigungs-Registry mit der
+Lovelace-Karte `custom:notification-registry-card`. Integration und Karte werden
+im Repository gemeinsam versioniert und über HACS ausgeliefert.
 
-## Manuelle Installation
+## Installation über HACS
 
-1. Den Ordner `custom_components/notification_registry` in das Verzeichnis
-   `custom_components/notification_registry` deiner Home-Assistant-
-   Konfiguration kopieren.
-2. `www/notification-registry-card.js` in das `www`-Verzeichnis derselben
-   Konfiguration kopieren.
-3. Home Assistant neu starten.
-4. Unter **Einstellungen → Geräte & Dienste** die Integration
+1. In HACS unter **Integrationen → Benutzerdefinierte Repositories**
+   `ThePatzen/notification-registry-ui` als Repository vom Typ **Integration**
+   hinzufügen.
+2. **Notification Registry** installieren und Home Assistant neu starten.
+3. Unter **Einstellungen → Geräte & Dienste** die Integration
    **Benachrichtigungs-Registry** hinzufügen. Es gibt genau einen Config Entry.
+4. Bei einem Lovelace-Dashboard im Storage-Modus wird die Kartenressource beim
+   Setup automatisch als Modul registriert.
 
-## Lovelace-Karte
+Die JavaScript-Karte liegt im HACS-Paket unter
+`custom_components/notification_registry/frontend/notification-registry-card.js`.
+Sie wird über den HA-Pfad
+`/notification_registry/notification-registry-card.js?v=0.1.0` ausgeliefert;
+ein separates `www`-Paket ist nicht erforderlich.
 
-Unter **Einstellungen → Dashboards → Ressourcen** die Ressource
-`/local/notification-registry-card.js` als JavaScript-Modul eintragen. Danach
-die Karte im Dashboard konfigurieren:
+## Lovelace-Karte in YAML-Modus
+
+Bei Lovelace im YAML-Modus die Ressource manuell als JavaScript-Modul in
+`ui-lovelace.yaml` eintragen:
+
+```yaml
+resources:
+  - url: /notification_registry/notification-registry-card.js?v=0.1.0
+    type: module
+```
+
+Danach die Karte im Dashboard konfigurieren:
 
 ```yaml
 type: custom:notification-registry-card
