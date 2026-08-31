@@ -19,10 +19,99 @@ try:  # HA imports are intentionally optional for focused API tests.
     from homeassistant.components import websocket_api
 except ImportError:  # pragma: no cover - used by focused tests without HA
 
+    class _Required(str):
+        required = True
+
+    class _Optional(str):
+        required = False
+
+    class _FallbackSchema:
+        def __init__(self, schema: Any):
+            self.schema = schema
+
+        def __call__(self, data: Any) -> dict[str, Any]:
+            if not isinstance(data, Mapping):
+                raise TypeError("WebSocket message must be an object")
+            output = dict(data)
+            for marker, validator in self.schema.items():
+                name = str(marker)
+                if getattr(marker, "required", False) and name not in data:
+                    raise ValueError(f"required key not provided: {name}")
+                if name not in data:
+                    continue
+                _fallback_validate(data[name], validator, name)
+            declared = {str(marker) for marker in self.schema}
+            declared.update({"id"})
+            if any(name not in declared for name in data):
+                raise ValueError("extra keys not allowed")
+            return output
+
+    class _FallbackCombined:
+        def __init__(self, validators: tuple[Any, ...]):
+            self.validators = validators
+            first = validators[0] if validators else None
+            self.command = (
+                str(first.schema.get("type"))
+                if isinstance(first, _FallbackSchema)
+                else ""
+            )
+
+        def __call__(self, data: Any) -> Mapping[str, Any]:
+            result = data
+            for validator in self.validators:
+                if callable(validator):
+                    result = validator(result)
+            return result
+
+    def _fallback_validate(value: Any, validator: Any, field: str) -> None:
+        if isinstance(validator, tuple):
+            for candidate in validator:
+                try:
+                    _fallback_validate(value, candidate, field)
+                    return
+                except (TypeError, ValueError):
+                    continue
+            raise TypeError(f"{field} has an invalid type")
+        if validator is None:
+            if value is not None:
+                raise TypeError(f"{field} must be null")
+            return
+        if isinstance(validator, str):
+            if value != validator:
+                raise ValueError(f"{field} has an invalid value")
+            return
+        if validator is str and not isinstance(value, str):
+            raise TypeError(f"{field} must be a string")
+        if validator is int and (isinstance(value, bool) or not isinstance(value, int)):
+            raise TypeError(f"{field} must be an integer")
+        if validator is dict and not isinstance(value, Mapping):
+            raise TypeError(f"{field} must be an object")
+        if isinstance(validator, list):
+            if not isinstance(value, list):
+                raise TypeError(f"{field} must be a list")
+            for child in value:
+                _fallback_validate(child, validator[0], field)
+        if isinstance(validator, _FallbackSchema):
+            validator(value)
+            return
+        if callable(validator):
+            validator(value)
+
     class _FallbackWebsocket:
         @staticmethod
-        def websocket_command(_schema: Any):
-            return lambda function: function
+        def websocket_command(schema: Any):
+            def decorate(function: Any) -> Any:
+                function._ws_schema = (
+                    _FallbackSchema(schema) if isinstance(schema, dict) else schema
+                )
+                function._ws_command = (
+                    str(schema.get("type"))
+                    if isinstance(schema, dict)
+                    else getattr(schema, "command", "")
+                )
+                return function
+
+            return decorate
 
         @staticmethod
         def async_response(function):
@@ -30,6 +119,7 @@ except ImportError:  # pragma: no cover - used by focused tests without HA
 
         @staticmethod
         def require_admin(function):
+            function._requires_admin = True
             return function
 
         @staticmethod
@@ -43,8 +133,19 @@ try:
 except ImportError:  # pragma: no cover - only used without HA dependencies
 
     class _FallbackVol:
-        Required = staticmethod(lambda value: value)
-        Optional = staticmethod(lambda value, **_kwargs: value)
+        Required = staticmethod(lambda value: _Required(value))
+        Optional = staticmethod(lambda value, **_kwargs: _Optional(value))
+        Schema = _FallbackSchema
+
+        @staticmethod
+        def Any(*validators: Any) -> Any:
+            return validators
+
+        @staticmethod
+        def All(*validators: Any) -> Any:
+            return _FallbackCombined(validators)
+
+        Invalid = ValueError
 
     vol = _FallbackVol()
 
@@ -60,8 +161,120 @@ _CONTROL_FIELDS = {
 }
 
 
-def _schema(command: str) -> dict[str, Any]:
-    return {vol.Required("type"): command}
+def _positive_integer(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise vol.Invalid("must be a positive integer")
+    return value
+
+
+_ENTRY_FIELDS = {
+    vol.Required("key"): str,
+    vol.Required("titel"): str,
+    vol.Required("text"): str,
+    vol.Required("schweregrad"): str,
+    vol.Required("zielgruppe"): str,
+    vol.Required("kanaele"): [str],
+    vol.Optional("tag"): vol.Any(str, None),
+    vol.Optional("revision"): _positive_integer,
+    vol.Optional("created_at"): str,
+    vol.Optional("updated_at"): str,
+}
+
+
+def _entry_schema() -> Any:
+    return vol.Schema(_ENTRY_FIELDS)
+
+
+def _validate_entry_message(data: Mapping[str, Any]) -> Mapping[str, Any]:
+    entry = data.get("entry", data.get("data"))
+    if isinstance(entry, Mapping):
+        _entry_schema()(entry)
+        return data
+    if all(
+        name in data
+        for name in ("key", "titel", "text", "schweregrad", "zielgruppe", "kanaele")
+    ):
+        _entry_schema()(
+            {
+                name: data[name]
+                for name in (
+                    "key",
+                    "titel",
+                    "text",
+                    "schweregrad",
+                    "zielgruppe",
+                    "kanaele",
+                    "tag",
+                    "revision",
+                    "created_at",
+                    "updated_at",
+                )
+                if name in data
+            }
+        )
+        return data
+    raise vol.Invalid("entry or complete entry fields are required")
+
+
+def _schema(command: str) -> Any:
+    base: dict[Any, Any] = {vol.Required("type"): command}
+    if command == "notification_registry/list":
+        return base
+    if command in {
+        "notification_registry/get",
+        "notification_registry/references",
+    }:
+        base[vol.Required("key")] = str
+    elif command == "notification_registry/create":
+        base.update(
+            {
+                vol.Optional("entry"): _entry_schema(),
+                vol.Optional("data"): _entry_schema(),
+            }
+        )
+        base.update(
+            {
+                vol.Optional(str(marker)): validator
+                for marker, validator in _ENTRY_FIELDS.items()
+            }
+        )
+        return vol.All(vol.Schema(base), _validate_entry_message)
+    elif command == "notification_registry/update":
+        base.update(
+            {
+                vol.Required("key"): str,
+                vol.Required("expected_revision"): _positive_integer,
+                vol.Optional("entry"): _entry_schema(),
+                vol.Optional("data"): _entry_schema(),
+            }
+        )
+        base.update(
+            {
+                vol.Optional(str(marker)): validator
+                for marker, validator in _ENTRY_FIELDS.items()
+                if str(marker) not in {"key", "revision"}
+            }
+        )
+        return vol.All(vol.Schema(base), _validate_entry_message)
+    elif command == "notification_registry/duplicate":
+        base.update({vol.Required("source_key"): str, vol.Required("new_key"): str})
+    elif command == "notification_registry/rename":
+        base.update(
+            {
+                vol.Required("key"): str,
+                vol.Required("new_key"): str,
+                vol.Required("expected_revision"): _positive_integer,
+                vol.Optional("confirm_references"): bool,
+            }
+        )
+    elif command == "notification_registry/delete":
+        base.update(
+            {
+                vol.Required("key"): str,
+                vol.Required("expected_revision"): _positive_integer,
+            }
+        )
+    return base
 
 
 def _result(connection: Any, msg: Mapping[str, Any], result: dict[str, Any]) -> None:
@@ -131,8 +344,8 @@ def _registry_result(registry: NotificationRegistry) -> dict[str, Any]:
     return {"data_revision": snapshot.data_revision}
 
 
-@websocket_api.websocket_command(_schema("notification_registry/list"))
 @websocket_api.require_admin
+@websocket_api.websocket_command(_schema("notification_registry/list"))
 @websocket_api.async_response
 async def async_handle_list(hass: Any, connection: Any, msg: Mapping[str, Any]) -> None:
     registry = _registry_from_hass(hass)
@@ -148,8 +361,8 @@ async def async_handle_list(hass: Any, connection: Any, msg: Mapping[str, Any]) 
     )
 
 
-@websocket_api.websocket_command(_schema("notification_registry/get"))
 @websocket_api.require_admin
+@websocket_api.websocket_command(_schema("notification_registry/get"))
 @websocket_api.async_response
 async def async_handle_get(hass: Any, connection: Any, msg: Mapping[str, Any]) -> None:
     key, issues = _required_string(msg, "key")
@@ -197,8 +410,8 @@ async def _create(hass: Any, connection: Any, msg: Mapping[str, Any]) -> None:
     _result(connection, msg, {"entry": entry.to_dict(), **_registry_result(registry)})
 
 
-@websocket_api.websocket_command(_schema("notification_registry/create"))
 @websocket_api.require_admin
+@websocket_api.websocket_command(_schema("notification_registry/create"))
 @websocket_api.async_response
 async def async_handle_create(
     hass: Any, connection: Any, msg: Mapping[str, Any]
@@ -245,8 +458,8 @@ async def _update(hass: Any, connection: Any, msg: Mapping[str, Any]) -> None:
     _result(connection, msg, {"entry": entry.to_dict(), **_registry_result(registry)})
 
 
-@websocket_api.websocket_command(_schema("notification_registry/update"))
 @websocket_api.require_admin
+@websocket_api.websocket_command(_schema("notification_registry/update"))
 @websocket_api.async_response
 async def async_handle_update(
     hass: Any, connection: Any, msg: Mapping[str, Any]
@@ -254,8 +467,8 @@ async def async_handle_update(
     await _update(hass, connection, msg)
 
 
-@websocket_api.websocket_command(_schema("notification_registry/duplicate"))
 @websocket_api.require_admin
+@websocket_api.websocket_command(_schema("notification_registry/duplicate"))
 @websocket_api.async_response
 async def async_handle_duplicate(
     hass: Any, connection: Any, msg: Mapping[str, Any]
@@ -290,11 +503,14 @@ async def async_handle_duplicate(
             issues=[issue.__dict__ for issue in err.issues],
         )
         return
+    except RegistrySaveError as err:
+        _error(connection, msg, "save_failed", str(err))
+        return
     _result(connection, msg, {"entry": entry.to_dict(), **_registry_result(registry)})
 
 
-@websocket_api.websocket_command(_schema("notification_registry/references"))
 @websocket_api.require_admin
+@websocket_api.websocket_command(_schema("notification_registry/references"))
 @websocket_api.async_response
 async def async_handle_references(
     hass: Any, connection: Any, msg: Mapping[str, Any]
@@ -334,6 +550,16 @@ async def _rename(hass: Any, connection: Any, msg: Mapping[str, Any]) -> None:
     if registry.get(old_key) is None:
         _error(connection, msg, "unknown_key", f"Unbekannter Key: {old_key}.")
         return
+    current = registry.get(old_key)
+    if current is not None and current.revision != revision:
+        _error(
+            connection,
+            msg,
+            "revision_conflict",
+            f"Revision conflict for {old_key}.",
+            current=current.to_dict(),
+        )
+        return
     references = await async_find_references(hass, old_key)
     if references and msg.get("confirm_references") is not True:
         _error(
@@ -367,11 +593,14 @@ async def _rename(hass: Any, connection: Any, msg: Mapping[str, Any]) -> None:
             issues=[issue.__dict__ for issue in err.issues],
         )
         return
+    except RegistrySaveError as err:
+        _error(connection, msg, "save_failed", str(err))
+        return
     _result(connection, msg, {"entry": entry.to_dict(), **_registry_result(registry)})
 
 
-@websocket_api.websocket_command(_schema("notification_registry/rename"))
 @websocket_api.require_admin
+@websocket_api.websocket_command(_schema("notification_registry/rename"))
 @websocket_api.async_response
 async def async_handle_rename(
     hass: Any, connection: Any, msg: Mapping[str, Any]
@@ -391,6 +620,16 @@ async def _delete(hass: Any, connection: Any, msg: Mapping[str, Any]) -> None:
     registry = _registry_from_hass(hass)
     if registry.get(key) is None:
         _error(connection, msg, "unknown_key", f"Unbekannter Key: {key}.")
+        return
+    current = registry.get(key)
+    if current is not None and current.revision != revision:
+        _error(
+            connection,
+            msg,
+            "revision_conflict",
+            f"Revision conflict for {key}.",
+            current=current.to_dict(),
+        )
         return
     # This lookup is intentionally unconditional: deletion is never allowed to
     # skip reference protection, even when no matches are expected.
@@ -415,13 +654,16 @@ async def _delete(hass: Any, connection: Any, msg: Mapping[str, Any]) -> None:
             current=err.current.to_dict(),
         )
         return
+    except RegistrySaveError as err:
+        _error(connection, msg, "save_failed", str(err))
+        return
     _result(
         connection, msg, {"key": key, "deleted": True, **_registry_result(registry)}
     )
 
 
-@websocket_api.websocket_command(_schema("notification_registry/delete"))
 @websocket_api.require_admin
+@websocket_api.websocket_command(_schema("notification_registry/delete"))
 @websocket_api.async_response
 async def async_handle_delete(
     hass: Any, connection: Any, msg: Mapping[str, Any]

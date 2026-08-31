@@ -8,8 +8,10 @@ from custom_components.notification_registry.reference import async_find_referen
 from custom_components.notification_registry.registry import NotificationRegistry
 from custom_components.notification_registry.storage import RegistryStorage
 from custom_components.notification_registry.websocket_api import (
+    COMMAND_HANDLERS,
     async_handle_create,
     async_handle_delete,
+    async_handle_duplicate,
     async_handle_list,
     async_handle_references,
     async_handle_rename,
@@ -20,11 +22,15 @@ from custom_components.notification_registry.websocket_api import (
 class MemoryStore:
     def __init__(self, data=None):
         self.data = data
+        self.fail_next_save = False
 
     async def async_load(self):
         return self.data
 
     async def async_save(self, data):
+        if self.fail_next_save:
+            self.fail_next_save = False
+            raise OSError("disk full")
         self.data = data
 
 
@@ -272,3 +278,193 @@ async def test_references_read_loaded_entity_components_raw_config(hass):
             "path": "actions[0].data.key",
         }
     ]
+
+
+def _schema_for(command):
+    handler = next(
+        handler for handler in COMMAND_HANDLERS if handler._ws_command == command
+    )
+    return handler
+
+
+def test_registered_commands_have_admin_metadata_and_complete_schemas():
+    expected = {
+        "notification_registry/list",
+        "notification_registry/get",
+        "notification_registry/create",
+        "notification_registry/update",
+        "notification_registry/duplicate",
+        "notification_registry/references",
+        "notification_registry/rename",
+        "notification_registry/delete",
+    }
+    assert {handler._ws_command for handler in COMMAND_HANDLERS} == expected
+    assert all(
+        getattr(handler, "_requires_admin", False) for handler in COMMAND_HANDLERS
+    )
+    assert callable(_schema_for("notification_registry/get")._ws_schema)
+
+
+def test_registered_schema_accepts_declared_entry_and_rejects_missing_or_wrong_fields():
+    create = _schema_for("notification_registry/create")._ws_schema
+    create(
+        {
+            "id": 1,
+            "type": "notification_registry/create",
+            "entry": {
+                "key": "x::y",
+                "titel": "X",
+                "text": "Y",
+                "schweregrad": "info",
+                "zielgruppe": "alle",
+                "kanaele": ["persistent"],
+            },
+        }
+    )
+    with pytest.raises((TypeError, ValueError)):
+        create(
+            {
+                "id": 1,
+                "type": "notification_registry/get",
+                "entry": {
+                    "key": "x::y",
+                    "titel": "X",
+                    "text": "Y",
+                    "schweregrad": "info",
+                    "zielgruppe": "alle",
+                    "kanaele": ["persistent"],
+                },
+            }
+        )
+    update = _schema_for("notification_registry/update")._ws_schema
+    with pytest.raises((TypeError, ValueError)):
+        update(
+            {
+                "id": 1,
+                "type": "notification_registry/update",
+                "key": "x::y",
+                "expected_revision": True,
+                "entry": {
+                    "key": "x::y",
+                    "titel": "X",
+                    "text": "Y",
+                    "schweregrad": "info",
+                    "zielgruppe": "alle",
+                    "kanaele": ["persistent"],
+                },
+            }
+        )
+    with pytest.raises((TypeError, ValueError)):
+        create({"id": 1, "type": "notification_registry/get"})
+    with pytest.raises((TypeError, ValueError)):
+        create(
+            {
+                "id": 1,
+                "type": "notification_registry/create",
+                "entry": {"key": 3},
+            }
+        )
+    with pytest.raises((TypeError, ValueError)):
+        create(
+            {
+                "id": 1,
+                "type": "notification_registry/create",
+                "entry": {
+                    "key": "x::y",
+                    "titel": "X",
+                    "text": "Y",
+                    "schweregrad": "info",
+                    "zielgruppe": "alle",
+                    "kanaele": ["persistent"],
+                    "tag": 3,
+                },
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_stale_referenced_delete_returns_revision_conflict_first(hass):
+    registry = hass.data["notification_registry"]["entry"]
+    await registry.update(
+        "technikraum::wasseralarm",
+        {
+            "key": "technikraum::wasseralarm",
+            "titel": "Current",
+            "text": "Water",
+            "schweregrad": "warnung",
+            "zielgruppe": "alle",
+            "kanaele": ["persistent"],
+        },
+        expected_revision=1,
+    )
+    hass.data["automation"] = {
+        "a": {"id": "a", "action": [{"message": "technikraum::wasseralarm"}]}
+    }
+    connection = Connection()
+    await async_handle_delete(
+        hass,
+        connection,
+        {
+            "id": 1,
+            "type": "notification_registry/delete",
+            "key": "technikraum::wasseralarm",
+            "expected_revision": 1,
+        },
+    )
+    assert message(connection)["error"]["code"] == "revision_conflict"
+    assert message(connection)["error"]["current"]["revision"] == 2
+
+
+@pytest.mark.asyncio
+async def test_stale_referenced_rename_returns_revision_conflict_first(hass):
+    registry = hass.data["notification_registry"]["entry"]
+    await registry.update(
+        "technikraum::wasseralarm",
+        {
+            "key": "technikraum::wasseralarm",
+            "titel": "Current",
+            "text": "Water",
+            "schweregrad": "warnung",
+            "zielgruppe": "alle",
+            "kanaele": ["persistent"],
+        },
+        expected_revision=1,
+    )
+    hass.data["automation"] = {
+        "a": {"id": "a", "action": [{"message": "technikraum::wasseralarm"}]}
+    }
+    connection = Connection()
+    await async_handle_rename(
+        hass,
+        connection,
+        {
+            "id": 1,
+            "type": "notification_registry/rename",
+            "key": "technikraum::wasseralarm",
+            "new_key": "technikraum::new",
+            "expected_revision": 1,
+        },
+    )
+    assert message(connection)["error"]["code"] == "revision_conflict"
+    assert message(connection)["error"]["current"]["revision"] == 2
+
+
+@pytest.mark.asyncio
+async def test_duplicate_save_error_is_reported(hass, valid_entry):
+    store = MemoryStore()
+    registry = await NotificationRegistry.async_create(RegistryStorage(store))
+    await registry.create(valid_entry(key="source::key"))
+    store.fail_next_save = True
+    hass.data["notification_registry"]["entry"] = registry
+    connection = Connection()
+    await async_handle_duplicate(
+        hass,
+        connection,
+        {
+            "id": 1,
+            "type": "notification_registry/duplicate",
+            "source_key": "source::key",
+            "new_key": "copy::key",
+        },
+    )
+    assert message(connection)["error"]["code"] == "save_failed"
