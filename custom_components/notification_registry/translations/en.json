@@ -9,5 +9,12 @@
     "abort": {
       "single_instance_allowed": "The notification registry is already configured."
     }
+  },
+  "entity": {
+    "sensor": {
+      "notification_registry_diagnostic": {
+        "name": "Notification Registry"
+      }
+    }
   }
 }

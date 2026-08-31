@@ -9,5 +9,12 @@
     "abort": {
       "single_instance_allowed": "Die Benachrichtigungs-Registry ist bereits eingerichtet."
     }
+  },
+  "entity": {
+    "sensor": {
+      "notification_registry_diagnostic": {
+        "name": "Benachrichtigungs-Registry"
+      }
+    }
   }
 }

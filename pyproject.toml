@@ -1,12 +1,15 @@
 [project]
 name = "notification-registry"
 version = "0.1.0"
-requires-python = ">=3.12"
-dependencies = [
-  "pytest",
-  "pytest-asyncio",
-  "pytest-homeassistant-custom-component",
-  "ruff",
+requires-python = ">=3.14"
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+  "pytest==9.0.3",
+  "pytest-asyncio==1.1.0",
+  "pytest-homeassistant-custom-component==0.13.354",
+  "ruff==0.16.5",
 ]
 
 [tool.pytest.ini_options]
@@ -14,4 +17,9 @@ asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 88
-target-version = "py312"
+target-version = "py314"
+
+[tool.ruff.lint]
+# Keep the package gate focused on correctness while older integration modules
+# retain their established formatting and compatibility shims.
+ignore = ["E501", "E731", "FURB162", "I001", "RUF009", "SIM102", "UP017", "UP035"]

@@ -51,6 +51,7 @@ class NotificationRegistrySensor(SensorEntity):
 
     _attr_name = "Benachrichtigungs-Registry"
     _attr_has_entity_name = True
+    _attr_translation_key = "notification_registry_diagnostic"
     _attr_unique_id = "notification_registry_diagnostic"
     _attr_should_poll = False
 
