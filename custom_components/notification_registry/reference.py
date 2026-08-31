@@ -107,7 +107,7 @@ def _friendly_name(hass: Any, entity_id: str, item: Any, config: Any) -> str:
 
 def _find_exact(value: Any, target: str, path: str = "") -> list[str]:
     if isinstance(value, str):
-        token = rf"(?<![A-Za-z0-9_]){re.escape(target)}(?![A-Za-z0-9_])"
+        token = rf"(?<![A-Za-z0-9_:-]){re.escape(target)}(?![A-Za-z0-9_:-])"
         return [path] if re.search(token, value) else []
     if isinstance(value, Mapping):
         matches: list[str] = []

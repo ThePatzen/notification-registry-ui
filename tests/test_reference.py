@@ -15,6 +15,8 @@ def test_finds_registry_key_token_inside_jinja_mapping_string() -> None:
     "value",
     [
         "foo::bar_extra",
+        "foo::bar::extra",
+        "foo::bar-baz",
         "prefixfoo::bar",
         "foo::barSuffix",
     ],
