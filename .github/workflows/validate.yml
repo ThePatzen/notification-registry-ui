@@ -27,7 +27,7 @@ jobs:
       - name: Python lint
         run: ruff check custom_components tests
       - name: Python tests
-        run: pytest -v
+        run: python -m pytest -v
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:

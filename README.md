@@ -85,7 +85,7 @@ mit Python 3.14 und `pytest==9.0.3`. Aus dem Repository-Stamm:
 
 ```text
 ruff check custom_components tests
-pytest -v
+python -m pytest -v
 npm ci
 npm test -- --run
 ```
