@@ -1,13 +1,13 @@
 [project]
 name = "notification-registry"
-version = "0.1.0"
+version = "0.1.1"
 requires-python = ">=3.14"
 dependencies = []
 
 [project.optional-dependencies]
 test = [
   "pytest==9.0.3",
-  "pytest-asyncio==1.1.0",
+  "pytest-asyncio==1.4.0",
   "pytest-homeassistant-custom-component==0.13.354",
   "ruff==0.16.5",
 ]

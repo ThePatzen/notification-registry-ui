@@ -72,7 +72,7 @@ async def test_registers_lovelace_resource_once_after_loading(hass):
     assert resources.created == [
         {
             "res_type": "module",
-            "url": "/notification_registry/notification-registry-card.js?v=0.1.0",
+            "url": "/notification_registry/notification-registry-card.js?v=0.1.1",
         }
     ]
 
@@ -97,7 +97,7 @@ async def test_updates_existing_resource_with_stale_version(hass):
             "legacy-card",
             {
                 "res_type": "module",
-                "url": "/notification_registry/notification-registry-card.js?v=0.1.0",
+                "url": "/notification_registry/notification-registry-card.js?v=0.1.1",
             },
         )
     ]

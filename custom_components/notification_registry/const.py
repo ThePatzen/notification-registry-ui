@@ -4,7 +4,7 @@ from pathlib import Path
 
 DOMAIN = "notification_registry"
 SCHEMA_VERSION = 1
-INTEGRATION_VERSION = "0.1.0"
+INTEGRATION_VERSION = "0.1.1"
 URL_BASE = "/notification_registry"
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 CARD_RESOURCE_URL = f"{URL_BASE}/notification-registry-card.js?v={INTEGRATION_VERSION}"

@@ -21,7 +21,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install \
             "pytest==9.0.3" \
-            "pytest-asyncio==1.1.0" \
+            "pytest-asyncio==1.4.0" \
             "pytest-homeassistant-custom-component==0.13.354" \
             "ruff==0.16.5"
       - name: Python lint

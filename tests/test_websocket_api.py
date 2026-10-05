@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
+import voluptuous as vol
+
+from homeassistant.exceptions import Unauthorized
 
 from custom_components.notification_registry.reference import async_find_references
 from custom_components.notification_registry.registry import NotificationRegistry
@@ -37,6 +41,10 @@ class MemoryStore:
 class Connection:
     def __init__(self):
         self.messages = []
+        self.user = SimpleNamespace(is_admin=True)
+
+    def async_handle_exception(self, _msg, error):
+        raise error
 
     def send_message(self, message):
         self.messages.append(message)
@@ -66,12 +74,27 @@ async def registry(valid_entry):
 
 @pytest.fixture
 def hass(registry):
+    background_tasks = []
+
+    def create_background_task(coro, _name, **_kwargs):
+        task = asyncio.create_task(coro)
+        background_tasks.append(task)
+        return task
+
     return SimpleNamespace(
+        background_tasks=background_tasks,
+        async_create_background_task=create_background_task,
         data={"notification_registry": {"entry": registry}},
         states={
             "automation.water_alarm": SimpleNamespace(name="Water alarm"),
         },
     )
+
+
+async def call_handler(handler, hass, connection, msg):
+    handler(hass, connection, msg)
+    await asyncio.gather(*hass.background_tasks)
+    hass.background_tasks.clear()
 
 
 def message(connection):
@@ -82,7 +105,8 @@ def message(connection):
 @pytest.mark.asyncio
 async def test_list_returns_confirmed_entries_and_data_revision(hass):
     connection = Connection()
-    await async_handle_list(
+    await call_handler(
+        async_handle_list,
         hass, connection, {"id": 1, "type": "notification_registry/list"}
     )
 
@@ -95,7 +119,8 @@ async def test_list_returns_confirmed_entries_and_data_revision(hass):
 @pytest.mark.asyncio
 async def test_create_update_and_rename_return_confirmed_entry(hass, valid_entry):
     connection = Connection()
-    await async_handle_create(
+    await call_handler(
+        async_handle_create,
         hass,
         connection,
         {
@@ -108,7 +133,8 @@ async def test_create_update_and_rename_return_confirmed_entry(hass, valid_entry
     assert created["revision"] == 1
 
     connection = Connection()
-    await async_handle_update(
+    await call_handler(
+        async_handle_update,
         hass,
         connection,
         {
@@ -124,7 +150,8 @@ async def test_create_update_and_rename_return_confirmed_entry(hass, valid_entry
     assert updated["revision"] == 2
 
     connection = Connection()
-    await async_handle_rename(
+    await call_handler(
+        async_handle_rename,
         hass,
         connection,
         {
@@ -146,7 +173,8 @@ async def test_stale_revision_returns_current_entry(hass, valid_entry):
         expected_revision=1,
     )
     connection = Connection()
-    await async_handle_update(
+    await call_handler(
+        async_handle_update,
         hass,
         connection,
         {
@@ -177,7 +205,8 @@ async def test_referenced_key_cannot_be_deleted(hass):
         }
     }
     connection = Connection()
-    await async_handle_delete(
+    await call_handler(
+        async_handle_delete,
         hass,
         connection,
         {
@@ -214,7 +243,8 @@ async def test_rename_requires_confirmation_but_does_not_mutate_references(hass)
         }
     }
     connection = Connection()
-    await async_handle_rename(
+    await call_handler(
+        async_handle_rename,
         hass,
         connection,
         {
@@ -231,7 +261,8 @@ async def test_rename_requires_confirmation_but_does_not_mutate_references(hass)
     assert hass.data["notification_registry"]["entry"].get("technikraum::wasseralarm")
 
     connection = Connection()
-    await async_handle_references(
+    await call_handler(
+        async_handle_references,
         hass,
         connection,
         {
@@ -249,7 +280,8 @@ async def test_rename_requires_confirmation_but_does_not_mutate_references(hass)
 @pytest.mark.asyncio
 async def test_invalid_entry_returns_validation_issues(hass, valid_entry):
     connection = Connection()
-    await async_handle_create(
+    await call_handler(
+        async_handle_create,
         hass,
         connection,
         {"id": 1, "type": "notification_registry/create", **valid_entry(titel="")},
@@ -287,7 +319,7 @@ def _schema_for(command):
     return handler
 
 
-def test_registered_commands_have_admin_metadata_and_complete_schemas():
+def test_registered_commands_require_admin_and_have_complete_schemas():
     expected = {
         "notification_registry/list",
         "notification_registry/get",
@@ -299,9 +331,12 @@ def test_registered_commands_have_admin_metadata_and_complete_schemas():
         "notification_registry/delete",
     }
     assert {handler._ws_command for handler in COMMAND_HANDLERS} == expected
-    assert all(
-        getattr(handler, "_requires_admin", False) for handler in COMMAND_HANDLERS
-    )
+    connection = Connection()
+    for user in (None, SimpleNamespace(is_admin=False)):
+        connection.user = user
+        for handler in COMMAND_HANDLERS:
+            with pytest.raises(Unauthorized):
+                handler(None, connection, {"id": 1, "type": handler._ws_command})
     assert callable(_schema_for("notification_registry/get")._ws_schema)
 
 
@@ -321,7 +356,7 @@ def test_registered_schema_accepts_declared_entry_and_rejects_missing_or_wrong_f
             },
         }
     )
-    with pytest.raises((TypeError, ValueError)):
+    with pytest.raises((TypeError, ValueError, vol.Invalid)):
         create(
             {
                 "id": 1,
@@ -337,7 +372,7 @@ def test_registered_schema_accepts_declared_entry_and_rejects_missing_or_wrong_f
             }
         )
     update = _schema_for("notification_registry/update")._ws_schema
-    with pytest.raises((TypeError, ValueError)):
+    with pytest.raises((TypeError, ValueError, vol.Invalid)):
         update(
             {
                 "id": 1,
@@ -354,9 +389,9 @@ def test_registered_schema_accepts_declared_entry_and_rejects_missing_or_wrong_f
                 },
             }
         )
-    with pytest.raises((TypeError, ValueError)):
+    with pytest.raises((TypeError, ValueError, vol.Invalid)):
         create({"id": 1, "type": "notification_registry/get"})
-    with pytest.raises((TypeError, ValueError)):
+    with pytest.raises((TypeError, ValueError, vol.Invalid)):
         create(
             {
                 "id": 1,
@@ -364,7 +399,7 @@ def test_registered_schema_accepts_declared_entry_and_rejects_missing_or_wrong_f
                 "entry": {"key": 3},
             }
         )
-    with pytest.raises((TypeError, ValueError)):
+    with pytest.raises((TypeError, ValueError, vol.Invalid)):
         create(
             {
                 "id": 1,
@@ -401,7 +436,8 @@ async def test_stale_referenced_delete_returns_revision_conflict_first(hass):
         "a": {"id": "a", "action": [{"message": "technikraum::wasseralarm"}]}
     }
     connection = Connection()
-    await async_handle_delete(
+    await call_handler(
+        async_handle_delete,
         hass,
         connection,
         {
@@ -434,7 +470,8 @@ async def test_stale_referenced_rename_returns_revision_conflict_first(hass):
         "a": {"id": "a", "action": [{"message": "technikraum::wasseralarm"}]}
     }
     connection = Connection()
-    await async_handle_rename(
+    await call_handler(
+        async_handle_rename,
         hass,
         connection,
         {
@@ -457,7 +494,8 @@ async def test_duplicate_save_error_is_reported(hass, valid_entry):
     store.fail_next_save = True
     hass.data["notification_registry"]["entry"] = registry
     connection = Connection()
-    await async_handle_duplicate(
+    await call_handler(
+        async_handle_duplicate,
         hass,
         connection,
         {

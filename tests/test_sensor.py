@@ -55,6 +55,7 @@ async def test_sensor_exposes_metadata_only():
     def add_entities(new_entities):
         entities.extend(new_entities)
         for entity in new_entities:
+            entity.entity_id = "sensor.benachrichtigungs_registry"
             hass.states.set(
                 entity.entity_id,
                 entity.native_value,
@@ -82,6 +83,7 @@ async def test_sensor_writes_state_after_registry_commit_and_unsubscribes():
     def add_entities(new_entities):
         nonlocal sensor
         sensor = new_entities[0]
+        sensor.entity_id = "sensor.benachrichtigungs_registry"
         hass.states.set(
             sensor.entity_id, sensor.native_value, sensor.extra_state_attributes
         )

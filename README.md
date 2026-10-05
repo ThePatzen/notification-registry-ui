@@ -23,7 +23,7 @@ dem oben genannten Pfad ergänzt werden.
 Die JavaScript-Karte liegt im HACS-Paket unter
 `custom_components/notification_registry/frontend/notification-registry-card.js`.
 Sie wird über den HA-Pfad
-`/notification_registry/notification-registry-card.js?v=0.1.0` ausgeliefert;
+`/notification_registry/notification-registry-card.js?v=0.1.1` ausgeliefert;
 ein separates `www`-Paket ist nicht erforderlich.
 
 ## Lovelace-Karte in YAML-Modus
@@ -33,7 +33,7 @@ Bei Lovelace im YAML-Modus die Ressource manuell als JavaScript-Modul in
 
 ```yaml
 resources:
-  - url: /notification_registry/notification-registry-card.js?v=0.1.0
+  - url: /notification_registry/notification-registry-card.js?v=0.1.1
     type: module
 ```
 
